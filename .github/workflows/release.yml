@@ -23,6 +23,10 @@ jobs:
       - name: Set Up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Clean Up Untracked Files
+        run: |
+          git clean -fdx
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
