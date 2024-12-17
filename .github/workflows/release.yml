@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Zig (for cargo-zigbuild)
+        run: |
+          wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
+          tar -xf zig-linux-x86_64-0.11.0.tar.xz
+          sudo mv zig-linux-x86_64-0.11.0/zig /usr/local/bin/zig
+
+      - name: Set Up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.CDD_GITHUB_TOKEN }}
