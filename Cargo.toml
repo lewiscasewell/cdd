@@ -1,0 +1,28 @@
+[package]
+name = "cdd"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.2", features = ["derive"] }
+walkdir = "2.3"
+swc_common = "5.0.0"
+swc_ecma_ast = "5.0.0"
+swc_ecma_parser = "6.0.0"
+petgraph = "0.6"
+rayon = "1.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.10"
+glob = "0.3.1"
+serde_yaml = "0.9.34"
+regex = "1.11.1"
+swc_ecma_visit = "5.0.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "2.1"
