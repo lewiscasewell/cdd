@@ -1,7 +1,7 @@
 # Circular dependency detector (CDD)
 ## Detect circular dependencies in JS projects
 
-inspired by (madge)[https://github.com/pahen/madge] (a JS implementation), but wanted to make it faster and output more comprehensive cycles.
+inspired by [https://github.com/pahen/madge](madge) (a JS implementation), but wanted to make it faster and output more comprehensive cycles.
 
 ## Usage
 
