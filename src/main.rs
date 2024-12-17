@@ -3,6 +3,7 @@ mod filesystem;
 mod graph;
 mod parser;
 
+use ::colored::*;
 use env_logger::Builder;
 use log::info;
 use std::path::PathBuf;
@@ -18,13 +19,15 @@ fn main() {
     if cli.number_of_cycles != number_of_cycles {
         println!(
             "❌ Test Failed: Expected {} cycle(s), but found {} cycle(s).",
-            cli.number_of_cycles, number_of_cycles
+            cli.number_of_cycles.to_string().bright_green().bold(),
+            number_of_cycles.to_string().red().bold()
         );
         std::process::exit(1);
     } else {
         println!(
             "✅ Test Passed: Expected {} cycle(s) and found {} cycle(s).",
-            cli.number_of_cycles, number_of_cycles
+            cli.number_of_cycles.to_string().bright_green().bold(),
+            number_of_cycles.to_string().bright_green().bold()
         );
         std::process::exit(0);
     }

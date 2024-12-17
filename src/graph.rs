@@ -1,3 +1,5 @@
+use colored::*;
+
 use petgraph::algo::kosaraju_scc;
 use petgraph::Graph;
 use std::collections::{HashMap, HashSet};
@@ -205,16 +207,23 @@ pub fn get_unique_cycles<'a>(graph: &'a Graph<PathBuf, ()>) -> Vec<Vec<&'a PathB
 /// Prints the detected cycles in a Madge-like format with relative paths.
 pub fn print_cycles(cycles: &[Vec<&PathBuf>], root: &Path) {
     if cycles.is_empty() {
-        println!("No circular dependencies found.");
+        println!("{}", "No circular dependencies found.".green().bold());
         return;
     }
 
-    eprintln!("✖ Found {} circular dependencies!\n", cycles.len());
+    eprintln!(
+        "✖ Found {} circular dependencies!\n",
+        cycles.len().to_string().red()
+    );
     for (i, cycle) in cycles.iter().enumerate() {
         let relative_paths: Vec<String> = cycle
             .iter()
             .map(|p| p.strip_prefix(root).unwrap_or(p).display().to_string())
             .collect();
-        eprintln!("{}) {}", i + 1, relative_paths.join(" > "));
+        eprintln!(
+            "{}) {}",
+            (i + 1).to_string().bright_blue().bold(),
+            relative_paths.join(&" > ".bright_blue().bold().to_string())
+        );
     }
 }
