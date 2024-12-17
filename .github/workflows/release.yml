@@ -23,9 +23,9 @@ jobs:
       - name: Set Up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Clean Up Untracked Files
+      - name: Install cargo-zigbuild
         run: |
-          git clean -fdx
+          cargo install --locked cargo-zigbuild
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
