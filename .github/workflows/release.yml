@@ -19,6 +19,7 @@ jobs:
           wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
           tar -xf zig-linux-x86_64-0.11.0.tar.xz
           sudo mv zig-linux-x86_64-0.11.0/zig /usr/local/bin/zig
+          zig version
 
       - name: Set Up Rust
         uses: dtolnay/rust-toolchain@stable
