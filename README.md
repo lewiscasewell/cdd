@@ -76,3 +76,33 @@ Multiple Smaller Cycles:
 
 - Single Comprehensive Cycle (SCC):
 `a.ts > c/index.ts > c/a.ts > c/b.ts > b.ts > a.ts`
+
+## To build binary for your linux
+Install the x86_64 toolchain:
+```bash
+rustup target add x86_64-unknown-linux-gnu
+```
+
+install `gcc` cross compiler for `x86_64-unknown-linux-gnu`:
+```bash
+brew install FiloSottile/musl-cross/musl-cross
+```
+
+build the binary:
+```bash
+cargo build --release --target x86_64-unknown-linux-gnu
+```
+or 
+```bash
+make build-linux
+```
+
+OR
+
+```bash
+brew install musl-cross
+```
+
+```bash
+cargo build --release --target x86_64-unknown-linux-musl
+```
