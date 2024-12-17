@@ -77,32 +77,28 @@ Multiple Smaller Cycles:
 - Single Comprehensive Cycle (SCC):
 `a.ts > c/index.ts > c/a.ts > c/b.ts > b.ts > a.ts`
 
-## To build binary for your linux
-Install the x86_64 toolchain:
+## Steps to Cross-Compile for Linux on macOS
+
+Install Homebrew Tools for Cross-Compilation Use Homebrew to install a Linux-compatible gcc toolchain.
+```bash
+brew tap messense/macos-cross-toolchains
+brew install x86_64-unknown-linux-gnu
+```
+This installs the x86_64-unknown-linux-gnu-gcc cross-compiler, which is required.
+
+Add the Toolchain to the Path Update your environment to include the cross-compiler.
+```bash
+export CC_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-gcc
+export CXX_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-g++
+```
+Add these lines to your shell config (e.g., .zshrc or .bashrc) if you plan to use this often.
+
+Install Rust Target for Linux Use rustup to install the x86_64-unknown-linux-gnu target.
 ```bash
 rustup target add x86_64-unknown-linux-gnu
 ```
 
-install `gcc` cross compiler for `x86_64-unknown-linux-gnu`:
-```bash
-brew install FiloSottile/musl-cross/musl-cross
-```
-
-build the binary:
+Build the Project for the Target Use the --target flag to cross-compile the binary.
 ```bash
 cargo build --release --target x86_64-unknown-linux-gnu
-```
-or 
-```bash
-make build-linux
-```
-
-OR
-
-```bash
-brew install musl-cross
-```
-
-```bash
-cargo build --release --target x86_64-unknown-linux-musl
 ```
