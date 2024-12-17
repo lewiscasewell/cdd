@@ -15,15 +15,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Zig (for cargo-zigbuild)
+      - name: Install Zig
         run: |
           wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
           tar -xf zig-linux-x86_64-0.11.0.tar.xz
-          sudo mv zig-linux-x86_64-0.11.0/zig /usr/local/bin/zig
-          echo "ZIGPATH=$(which zig)" >> $GITHUB_ENV
-          echo "CC=zig cc" >> $GITHUB_ENV
-          echo "CXX=zig c++" >> $GITHUB_ENV
+          sudo mv zig-linux-x86_64-0.11.0 /opt/zig
+          sudo ln -s /opt/zig/zig /usr/local/bin/zig
           zig version
+          zig env
 
       - name: Debug Paths
         run: |
