@@ -1,8 +1,8 @@
-// graph.rs
 use petgraph::algo::kosaraju_scc;
 use petgraph::Graph;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 use crate::parser::get_imports_from_file;
 
@@ -17,24 +17,54 @@ fn normalize_path(path: &PathBuf) -> PathBuf {
     }
 }
 
+/// Generates a list of unique extensions sorted by descending length.
+fn generate_extension_list(dir: &str) -> Vec<String> {
+    let mut extensions = HashSet::new();
+
+    for entry in WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
+            extensions.insert(ext.to_string());
+        }
+
+        // Handle multiple-dot extensions
+        let file_name = entry.file_name().to_string_lossy();
+        if let Some(pos) = file_name.find('.') {
+            let sub_ext = &file_name[pos..];
+            extensions.insert(sub_ext.to_string());
+        }
+    }
+
+    let mut ext_vec: Vec<String> = extensions.into_iter().collect();
+    // Sort by descending length
+    ext_vec.sort_by(|a, b| b.len().cmp(&a.len()));
+    ext_vec
+}
+
 /// Builds the dependency graph from a list of files.
 /// Handles only relative imports.
 pub fn build_dependency_graph(files: &[PathBuf]) -> Graph<PathBuf, ()> {
     let mut graph = Graph::new();
     let mut node_indices = HashMap::new();
 
+    // Dynamically generate the extensions list
+    let extensions = generate_extension_list("."); // Pass the root directory
+
     // Insert all files as nodes
     for file in files {
         let idx = graph.add_node(file.clone());
         node_indices.insert(file.clone(), idx);
-        debug!("Added node: {:?}", file); // Debug log
+        debug!("Added node: {:?}", file);
     }
 
     for file in files {
         let imports = get_imports_from_file(file);
-        debug!("Processing file: {:?}", file); // Debug log
+        debug!("Processing file: {:?}", file);
         for import in imports {
-            if let Some(resolved) = resolve_import(file, &import) {
+            if let Some(resolved) = resolve_import(file, &import, &extensions) {
                 if let Some(&to_idx) = node_indices.get(&resolved) {
                     let from_idx = node_indices[file];
                     graph.add_edge(from_idx, to_idx, ());
@@ -56,52 +86,42 @@ pub fn build_dependency_graph(files: &[PathBuf]) -> Graph<PathBuf, ()> {
 
 /// Resolves a relative import to an absolute, normalized PathBuf.
 /// Returns `None` if the import cannot be resolved.
-fn resolve_import(base: &Path, import: &str) -> Option<PathBuf> {
+fn resolve_import(base: &Path, import: &str, extensions: &Vec<String>) -> Option<PathBuf> {
     if !import.starts_with('.') {
         return None; // Only handle relative imports
     }
 
     let candidate = base.parent()?.join(import);
-    debug!("Attempting to resolve import: '{}' from {:?}", import, base); // Debug log
+    debug!("Attempting to resolve import: '{}' from {:?}", import, base);
 
-    check_candidates(candidate)
+    check_candidates(candidate, extensions)
 }
 
 /// Checks various possibilities for the import path.
 /// Returns the resolved, canonicalized PathBuf if found.
-fn check_candidates(candidate: PathBuf) -> Option<PathBuf> {
-    let extensions = ["", ".ts", ".tsx", ".js", ".jsx", ".cjs", ".mjs"];
-
-    // 1. Direct file
-    if candidate.is_file() {
-        let canonical = normalize_path(&candidate);
-        debug!("check_candidates: Found direct file {:?}", canonical); // Debug log
-        return Some(canonical);
-    }
-
-    // 2. Try appending extensions
-    for ext in extensions.iter().skip(1) {
+fn check_candidates(candidate: PathBuf, extensions: &Vec<String>) -> Option<PathBuf> {
+    for ext in extensions {
         let mut p = candidate.clone();
         if !ext.is_empty() {
-            p.set_extension(&ext[1..]); // Remove the dot before setting the extension
+            // Remove the leading dot before setting the extension
+            p.set_extension(&ext[1..]);
         }
         if p.is_file() {
             let canonical = normalize_path(&p);
-            debug!(
-                "check_candidates: Found file with extension {:?}",
-                canonical
-            ); // Debug log
+            debug!("check_candidates: Found file {:?}", canonical);
             return Some(canonical);
         }
     }
 
-    // 3. If directory, try index files
+    // If candidate is a directory, try index files
     if candidate.is_dir() {
-        for idx_ext in &["ts", "tsx", "js", "jsx", "cjs", "mjs"] {
-            let idx_file = candidate.join(format!("index.{}", idx_ext)); // Ensure the dot is present
+        let index_extensions = vec![".ts", ".tsx", ".js", ".jsx", ".cjs", ".mjs"];
+
+        for idx_ext in index_extensions {
+            let idx_file = candidate.join(format!("index{}", idx_ext));
             if idx_file.is_file() {
                 let canonical = normalize_path(&idx_file);
-                debug!("check_candidates: Found index file {:?}", canonical); // Debug log
+                debug!("check_candidates: Found index file {:?}", canonical);
                 return Some(canonical);
             }
         }
@@ -110,7 +130,7 @@ fn check_candidates(candidate: PathBuf) -> Option<PathBuf> {
     debug!(
         "check_candidates: Could not resolve candidate {:?}",
         candidate
-    ); // Debug log
+    );
     None
 }
 

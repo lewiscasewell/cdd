@@ -60,3 +60,19 @@ c. Create a new module that coordinates interactions between `a.ts` and `b.ts`, 
 
 3. Test and Validate
 After refactoring, test your changes to ensure that the circular dependency has been resolved. Run your tests and check for any regressions.
+
+## Why i chose single comprehensive cycle output over multiple smaller cycles
+unlike madge, i chose to use a long chain of dependencies to represent the cycle instead of multiple smaller cycles because
+
+- Single comprehensive cycle output is easier to understand and debug.
+- It provides a clear picture of the dependencies that need to be resolved.
+
+Example:
+
+Multiple Smaller Cycles:
+`a.ts > b.ts > a.ts`
+`a.ts > c/index.ts > c/b.ts > c/a.ts > a.ts`
+`a.ts > c/index.ts > c/a.ts > a.ts`
+
+- Single Comprehensive Cycle (SCC):
+`a.ts > c/index.ts > c/a.ts > c/b.ts > b.ts > a.ts`
