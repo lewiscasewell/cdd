@@ -22,10 +22,6 @@ fn get_static_extension_list() -> Vec<String> {
     vec![
         ".hook.ts".to_string(),
         ".component.tsx".to_string(),
-        ".spec.tsx".to_string(),
-        ".test.tsx".to_string(),
-        ".spec.ts".to_string(),
-        ".test.ts".to_string(),
         ".tsx".to_string(),
         ".ts".to_string(),
         ".jsx".to_string(),
