@@ -13,11 +13,19 @@ fn main() {
     initialize_logger(cli.debug);
 
     info!("Starting analysis in directory: {}", cli.dir);
-    let has_cycles = run_analysis(&cli.dir, &cli.exclude);
+    let number_of_cycles = run_analysis(&cli.dir, &cli.exclude);
 
-    if has_cycles {
+    if cli.number_of_cycles != number_of_cycles {
+        println!(
+            "❌ Test Failed: Expected {} cycle(s), but found {} cycle(s).",
+            cli.number_of_cycles, number_of_cycles
+        );
         std::process::exit(1);
     } else {
+        println!(
+            "✅ Test Passed: Expected {} cycle(s) and found {} cycle(s).",
+            cli.number_of_cycles, number_of_cycles
+        );
         std::process::exit(0);
     }
 }
@@ -35,7 +43,7 @@ fn initialize_logger(debug: bool) {
     builder.init();
 }
 
-fn run_analysis(dir: &str, excludes: &[String]) -> bool {
+fn run_analysis(dir: &str, excludes: &[String]) -> usize {
     // Canonicalize the root directory to get its absolute path
     let root = PathBuf::from(dir)
         .canonicalize()
@@ -60,5 +68,5 @@ fn run_analysis(dir: &str, excludes: &[String]) -> bool {
     graph::print_cycles(&cycles, &root);
 
     // Return true if cycles are found
-    !cycles.is_empty()
+    cycles.len()
 }

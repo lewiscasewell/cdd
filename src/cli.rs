@@ -5,6 +5,7 @@ pub struct Cli {
     pub dir: String,
     pub exclude: Vec<String>,
     pub debug: bool,
+    pub number_of_cycles: usize,
 }
 
 pub fn parse_args() -> Cli {
@@ -33,6 +34,15 @@ pub fn parse_args() -> Cli {
                 .help("Enable debug logging")
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("number_of_cycles")
+                .short('n')
+                .long("numberOfCycles")
+                .help("Specify the expected number of cycles")
+                .num_args(1)
+                .value_parser(clap::value_parser!(usize))
+                .default_value("0"),
+        )
         .get_matches();
 
     Cli {
@@ -45,5 +55,8 @@ pub fn parse_args() -> Cli {
             .map(|vals| vals.cloned().collect())
             .unwrap_or_else(Vec::new),
         debug: *matches.get_one::<bool>("debug").unwrap_or(&false),
+        number_of_cycles: *matches
+            .get_one::<usize>("number_of_cycles")
+            .expect("number_of_cycles has a default value"),
     }
 }
