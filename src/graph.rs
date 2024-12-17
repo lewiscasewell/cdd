@@ -2,7 +2,6 @@ use petgraph::algo::kosaraju_scc;
 use petgraph::Graph;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 use crate::parser::get_imports_from_file;
 
@@ -17,31 +16,19 @@ fn normalize_path(path: &PathBuf) -> PathBuf {
     }
 }
 
-/// Generates a list of unique extensions sorted by descending length.
-fn generate_extension_list(dir: &str) -> Vec<String> {
-    let mut extensions = HashSet::new();
-
-    for entry in WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
-            extensions.insert(ext.to_string());
-        }
-
-        // Handle multiple-dot extensions
-        let file_name = entry.file_name().to_string_lossy();
-        if let Some(pos) = file_name.find('.') {
-            let sub_ext = &file_name[pos..];
-            extensions.insert(sub_ext.to_string());
-        }
-    }
-
-    let mut ext_vec: Vec<String> = extensions.into_iter().collect();
-    // Sort by descending length
-    ext_vec.sort_by(|a, b| b.len().cmp(&a.len()));
-    ext_vec
+fn get_static_extension_list() -> Vec<String> {
+    vec![
+        ".hook.ts".to_string(),
+        ".component.tsx".to_string(),
+        ".spec.ts".to_string(),
+        ".test.ts".to_string(),
+        ".tsx".to_string(),
+        ".ts".to_string(),
+        ".jsx".to_string(),
+        ".js".to_string(),
+        ".cjs".to_string(),
+        ".mjs".to_string(),
+    ]
 }
 
 /// Builds the dependency graph from a list of files.
@@ -51,7 +38,7 @@ pub fn build_dependency_graph(files: &[PathBuf]) -> Graph<PathBuf, ()> {
     let mut node_indices = HashMap::new();
 
     // Dynamically generate the extensions list
-    let extensions = generate_extension_list("."); // Pass the root directory
+    let extensions = get_static_extension_list();
 
     // Insert all files as nodes
     for file in files {
