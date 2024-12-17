@@ -14,12 +14,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Install Zig (for cargo-zigbuild)
         run: |
           wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
           tar -xf zig-linux-x86_64-0.11.0.tar.xz
           sudo mv zig-linux-x86_64-0.11.0/zig /usr/local/bin/zig
+          echo "ZIGPATH=$(which zig)" >> $GITHUB_ENV
+          echo "CC=zig cc" >> $GITHUB_ENV
+          echo "CXX=zig c++" >> $GITHUB_ENV
           zig version
+
+      - name: Debug Paths
+        run: |
+          echo "ZIG Path: $ZIGPATH"
+          which zig
+          zig cc --version
+          echo "CC: $CC"
+          echo "CXX: $CXX"
 
       - name: Set Up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -28,6 +40,11 @@ jobs:
         run: |
           cargo install --locked cargo-zigbuild
 
+      - name: Clear Cargo Build Cache
+        run: |
+          cargo clean
+          rm -rf ~/.cache/cargo-zigbuild
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -35,3 +52,5 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.CDD_GITHUB_TOKEN }}
+          CC: zig cc
+          CXX: zig c++
