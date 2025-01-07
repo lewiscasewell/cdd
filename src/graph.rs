@@ -21,6 +21,7 @@ fn normalize_path(path: &PathBuf) -> PathBuf {
 fn get_static_extension_list() -> Vec<String> {
     vec![
         ".hook.ts".to_string(),
+        ".hook.tsx".to_string(),
         ".component.tsx".to_string(),
         ".tsx".to_string(),
         ".ts".to_string(),
