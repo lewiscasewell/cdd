@@ -20,9 +20,6 @@ fn normalize_path(path: &PathBuf) -> PathBuf {
 
 fn get_static_extension_list() -> Vec<String> {
     vec![
-        ".hook.ts".to_string(),
-        ".hook.tsx".to_string(),
-        ".component.tsx".to_string(),
         ".tsx".to_string(),
         ".ts".to_string(),
         ".jsx".to_string(),
@@ -85,31 +82,44 @@ fn resolve_import(base: &Path, import: &str, extensions: &Vec<String>) -> Option
     check_candidates(candidate, extensions)
 }
 
+fn handle_if_file(path: &PathBuf) -> Option<PathBuf> {
+    if path.is_file() {
+        let canonical = normalize_path(&path);
+        debug!("check_candidates: Found file directly {:?}", canonical);
+        return Some(canonical);
+    }
+    None
+}
+
 /// Checks various possibilities for the import path.
 /// Returns the resolved, canonicalized PathBuf if found.
 fn check_candidates(candidate: PathBuf, extensions: &Vec<String>) -> Option<PathBuf> {
+    if let Some(canonical) = handle_if_file(&candidate) {
+        return Some(canonical);
+    }
+
     for ext in extensions {
-        let mut p = candidate.clone();
-        if !ext.is_empty() {
-            // Remove the leading dot before setting the extension
-            p.set_extension(&ext[1..]);
-        }
-        if p.is_file() {
-            let canonical = normalize_path(&p);
-            debug!("check_candidates: Found file {:?}", canonical);
+        let file_name = candidate
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+
+        let new_file_name = format!("{}{}", file_name, ext);
+        let new_path = candidate.with_file_name(&new_file_name);
+
+        if let Some(canonical) = handle_if_file(&new_path) {
             return Some(canonical);
         }
     }
 
     // If candidate is a directory, try index files
     if candidate.is_dir() {
-        let index_extensions = vec![".ts", ".tsx", ".js", ".jsx", ".cjs", ".mjs"];
+        let index_extensions = get_static_extension_list();
 
         for idx_ext in index_extensions {
             let idx_file = candidate.join(format!("index{}", idx_ext));
-            if idx_file.is_file() {
-                let canonical = normalize_path(&idx_file);
-                debug!("check_candidates: Found index file {:?}", canonical);
+            if let Some(canonical) = handle_if_file(&idx_file) {
                 return Some(canonical);
             }
         }

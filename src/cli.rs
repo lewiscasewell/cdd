@@ -1,4 +1,3 @@
-// cli.rs
 use clap::{Arg, ArgAction, Command};
 
 pub struct Cli {
