@@ -19,6 +19,15 @@ cdd -- --exclude node_modules ./src
 
 `.ts`, `.tsx`, `.js`, `.jsx`, `.cjs`, `.mjs`
 
+## Supported options
+`-e, --exclude <exclude>                  Directories to exclude`
+`-d, --debug                              Enable debug logging`
+`-n, --numberOfCycles <number_of_cycles>  Specify the expected number of cycles [default: 0]`
+`-s, --silent                             Enable silent output`
+`-h, --help                               Print help`
+`-V, --version                            Print version`
+
+
 ## How it works
 
 1. Parse all files in the directory and extract all imports
