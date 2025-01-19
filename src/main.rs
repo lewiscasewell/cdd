@@ -11,20 +11,20 @@ use std::path::PathBuf;
 fn main() {
     let cli = cli::parse_args();
 
-    initialize_logger(cli.debug);
+    initialize_logger(cli.debug, cli.silent);
+    log::info!("Starting analysis in directory: {}", cli.dir);
 
-    info!("Starting analysis in directory: {}", cli.dir);
     let number_of_cycles = run_analysis(&cli.dir, &cli.exclude);
 
     if cli.number_of_cycles != number_of_cycles {
-        println!(
+        info!(
             "❌ Test Failed: Expected {} cycle(s), but found {} cycle(s).",
             cli.number_of_cycles.to_string().bright_green().bold(),
             number_of_cycles.to_string().red().bold()
         );
         std::process::exit(1);
     } else {
-        println!(
+        info!(
             "✅ Test Passed: Expected {} cycle(s) and found {} cycle(s).",
             cli.number_of_cycles.to_string().bright_green().bold(),
             number_of_cycles.to_string().bright_green().bold()
@@ -34,10 +34,12 @@ fn main() {
 }
 
 /// Initializes the logger with appropriate log level based on the debug flag.
-fn initialize_logger(debug: bool) {
+fn initialize_logger(debug: bool, silent: bool) {
     let mut builder = Builder::new();
 
-    if debug {
+    if silent {
+        builder.filter_level(log::LevelFilter::Off);
+    } else if debug {
         builder.filter_level(log::LevelFilter::Debug);
     } else {
         builder.filter_level(log::LevelFilter::Info);

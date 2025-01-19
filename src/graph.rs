@@ -1,13 +1,11 @@
-use colored::*;
+use crate::parser::get_imports_from_file;
 
+use colored::*;
+use log::{debug, info, warn};
 use petgraph::algo::kosaraju_scc;
 use petgraph::Graph;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-
-use crate::parser::get_imports_from_file;
-
-use log::{debug, warn};
 
 /// Normalizes a path by resolving it to an absolute path
 /// and removing redundant components.
@@ -214,11 +212,11 @@ pub fn get_unique_cycles<'a>(graph: &'a Graph<PathBuf, ()>) -> Vec<Vec<&'a PathB
 /// Prints the detected cycles in a Madge-like format with relative paths.
 pub fn print_cycles(cycles: &[Vec<&PathBuf>], root: &Path) {
     if cycles.is_empty() {
-        println!("{}", "No circular dependencies found.".green().bold());
+        log::info!("{}", "no circular dependencies found.".green().bold());
         return;
     }
 
-    eprintln!(
+    info!(
         "✖ Found {} circular dependencies!\n",
         cycles.len().to_string().red()
     );
@@ -227,7 +225,7 @@ pub fn print_cycles(cycles: &[Vec<&PathBuf>], root: &Path) {
             .iter()
             .map(|p| p.strip_prefix(root).unwrap_or(p).display().to_string())
             .collect();
-        eprintln!(
+        info!(
             "{}) {}",
             (i + 1).to_string().bright_blue().bold(),
             relative_paths.join(&" > ".bright_blue().bold().to_string())

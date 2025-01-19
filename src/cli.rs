@@ -5,12 +5,13 @@ pub struct Cli {
     pub exclude: Vec<String>,
     pub debug: bool,
     pub number_of_cycles: usize,
+    pub silent: bool,
 }
 
 pub fn parse_args() -> Cli {
     let matches = Command::new("Circular Dependency Detector")
-        .version("0.1.0")
-        .author("Your Name <you@example.com>")
+        .version(env!("CARGO_PKG_VERSION"))
+        .author("Lewis Casewell")
         .about("Detects circular dependencies in your project")
         .arg(
             Arg::new("dir")
@@ -42,6 +43,13 @@ pub fn parse_args() -> Cli {
                 .value_parser(clap::value_parser!(usize))
                 .default_value("0"),
         )
+        .arg(
+            Arg::new("silent")
+                .short('s')
+                .long("silent")
+                .help("Enable silent output")
+                .action(ArgAction::SetTrue),
+        )
         .get_matches();
 
     Cli {
@@ -57,5 +65,6 @@ pub fn parse_args() -> Cli {
         number_of_cycles: *matches
             .get_one::<usize>("number_of_cycles")
             .expect("number_of_cycles has a default value"),
+        silent: *matches.get_one::<bool>("silent").unwrap_or(&false),
     }
 }
