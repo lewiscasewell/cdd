@@ -6,6 +6,7 @@ mod parser;
 use ::colored::*;
 use env_logger::Builder;
 use log::info;
+use parser::ParserOptions;
 use std::path::PathBuf;
 
 fn main() {
@@ -14,7 +15,11 @@ fn main() {
     initialize_logger(cli.debug, cli.silent);
     log::info!("Starting analysis in directory: {}", cli.dir);
 
-    let number_of_cycles = run_analysis(&cli.dir, &cli.exclude);
+    let parser_options = ParserOptions {
+        ignore_type_imports: cli.ignore_type_imports,
+    };
+
+    let number_of_cycles = run_analysis(&cli.dir, &cli.exclude, &parser_options);
 
     if cli.number_of_cycles != number_of_cycles {
         info!(
@@ -48,7 +53,7 @@ fn initialize_logger(debug: bool, silent: bool) {
     builder.init();
 }
 
-fn run_analysis(dir: &str, excludes: &[String]) -> usize {
+fn run_analysis(dir: &str, excludes: &[String], parser_options: &ParserOptions) -> usize {
     // Canonicalize the root directory to get its absolute path
     let root = PathBuf::from(dir)
         .canonicalize()
@@ -59,7 +64,7 @@ fn run_analysis(dir: &str, excludes: &[String]) -> usize {
     info!("Collected {} files.", files.len());
 
     // Build the dependency graph
-    let graph = graph::build_dependency_graph(&files);
+    let graph = graph::build_dependency_graph(&files, parser_options);
     info!(
         "Built dependency graph with {} nodes and {} edges.",
         graph.node_count(),

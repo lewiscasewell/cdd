@@ -6,6 +6,7 @@ pub struct Cli {
     pub debug: bool,
     pub number_of_cycles: usize,
     pub silent: bool,
+    pub ignore_type_imports: bool,
 }
 
 pub fn parse_args() -> Cli {
@@ -50,6 +51,13 @@ pub fn parse_args() -> Cli {
                 .help("Enable silent output")
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("ignore_type_imports")
+                .short('t')
+                .long("ignore-type-imports")
+                .help("Ignore type-only imports (import type { Foo }). These are erased at compile time and don't cause runtime cycles.")
+                .action(ArgAction::SetTrue),
+        )
         .get_matches();
 
     Cli {
@@ -66,5 +74,6 @@ pub fn parse_args() -> Cli {
             .get_one::<usize>("number_of_cycles")
             .expect("number_of_cycles has a default value"),
         silent: *matches.get_one::<bool>("silent").unwrap_or(&false),
+        ignore_type_imports: *matches.get_one::<bool>("ignore_type_imports").unwrap_or(&false),
     }
 }

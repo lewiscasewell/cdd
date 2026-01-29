@@ -1,4 +1,4 @@
-use crate::parser::get_imports_from_file;
+use crate::parser::{get_imports_from_file, ParserOptions};
 
 use colored::*;
 use log::{debug, info, warn};
@@ -29,7 +29,7 @@ fn get_static_extension_list() -> Vec<String> {
 
 /// Builds the dependency graph from a list of files.
 /// Handles only relative imports.
-pub fn build_dependency_graph(files: &[PathBuf]) -> Graph<PathBuf, ()> {
+pub fn build_dependency_graph(files: &[PathBuf], options: &ParserOptions) -> Graph<PathBuf, ()> {
     let mut graph = Graph::new();
     let mut node_indices = HashMap::new();
 
@@ -44,7 +44,7 @@ pub fn build_dependency_graph(files: &[PathBuf]) -> Graph<PathBuf, ()> {
     }
 
     for file in files {
-        let imports = get_imports_from_file(file);
+        let imports = get_imports_from_file(file, options);
         debug!("Processing file: {:?}", file);
         for import in imports {
             if let Some(resolved) = resolve_import(file, &import, &extensions) {
