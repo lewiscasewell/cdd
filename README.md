@@ -1,114 +1,196 @@
-# Circular dependency detector (CDD)
-## Detect circular dependencies in JS projects
+# Circular Dependency Detector (CDD)
 
-inspired by [madge](https://github.com/pahen/madge) (a JS implementation), but wanted to make it faster and output more comprehensive cycles.
+Fast circular dependency detection for JavaScript and TypeScript projects.
+
+Inspired by [madge](https://github.com/pahen/madge), but built in Rust for speed and comprehensive cycle output.
+
+## Installation
+
+Download the latest release for your platform from [Releases](https://github.com/lewiscasewell/cdd/releases).
+
+Or build from source:
+```bash
+cargo install --path .
+```
 
 ## Usage
 
 ```bash
-cdd [OPTIONS] [DIR]
+cdd [OPTIONS] <DIR>
 ```
 
-## Example
+### Examples
 
 ```bash
-cdd -- --exclude node_modules ./src
+# Scan a directory
+cdd ./src
+
+# Exclude directories
+cdd --exclude node_modules --exclude dist ./src
+
+# Ignore type-only imports (recommended for TypeScript)
+cdd --ignore-type-imports ./src
+
+# Scan built JavaScript output
+cdd --exclude src ./dist
+
+# CI mode: fail if cycles don't match expected count
+cdd -n 0 ./src  # Fail if any cycles found
 ```
 
-## Supported files
+## Options
 
-`.ts`, `.tsx`, `.js`, `.jsx`, `.cjs`, `.mjs`
-
-## Supported options
 ```
--e, --exclude <exclude>                  Directories to exclude
--d, --debug                              Enable debug logging
--n, --numberOfCycles <number_of_cycles>  Specify the expected number of cycles [default: 0]
--s, --silent                             Enable silent output
--h, --help                               Print help
--V, --version                            Print version
-```
+Arguments:
+  <DIR>  The root directory to analyze
 
-## How it works
-
-1. Parse all files in the directory and extract all imports
-2. Create a graph of the imports
-3. Find all cycles in the graph
-4. Output the cycles
-
-If a cycle is detected will return a non-zero exit code. If no cycles are detected will return a zero exit code.
-
-An example output of the cycle could be:
-```
-✖ Found 1 circular dependencies!
-
-1) packages/api/src/a.ts > packages/api/src/c/index.ts > packages/api/src/c/a.ts > packages/api/src/c/b.ts > packages/api/src/b.ts
+Options:
+  -e, --exclude <EXCLUDE>        Directories to exclude (can be used multiple times)
+  -t, --ignore-type-imports      Ignore type-only imports (import type { Foo })
+  -d, --debug                    Enable debug logging
+  -n, --numberOfCycles <N>       Expected number of cycles [default: 0]
+  -s, --silent                   Suppress all output
+  -h, --help                     Print help
+  -V, --version                  Print version
 ```
 
-This can be interpreted as:
-- `packages/api/src/a.ts` imports `packages/api/src/c/index.ts`
-- `packages/api/src/c/index.ts` imports `packages/api/src/c/a.ts`
-- `packages/api/src/c/a.ts` imports `packages/api/src/c/b.ts`
-- `packages/api/src/c/b.ts` imports `packages/api/src/b.ts`
-- `packages/api/src/b.ts` imports `packages/api/src/a.ts`
+## Supported Files
 
-## steps to resolve this cycle
+| Extension | Syntax |
+|-----------|--------|
+| `.ts`     | TypeScript |
+| `.tsx`    | TypeScript + JSX |
+| `.js`, `.mjs` | ES Modules |
+| `.jsx`    | ES Modules + JSX |
+| `.cjs`    | CommonJS |
 
-1. Identify Shared Responsibilities
-Determine if any modules share common functionalities that can be abstracted into separate modules. This often helps in reducing direct dependencies.
-2. Refactor to Remove Direct Dependencies
-Here's how you can approach refactoring based on your detected cycle:
-Extract Common Functionality:
+## Supported Import Types
 
-a. If both `a.ts` and `b.ts` share some logic, extract it into a new module (e.g., `common.ts`).
-Decouple Modules Using Interfaces:
+- ES Module imports: `import { foo } from './foo'`
+- Type-only imports: `import type { Foo } from './foo'` (skipped with `-t`)
+- Dynamic imports: `const mod = await import('./foo')`
+- CommonJS: `const foo = require('./foo')`
+- Re-exports: `export * from './foo'`
 
-b. Instead of directly importing modules, use interfaces or abstractions to define dependencies.
-Introduce an Intermediary Module:
+## Example Output
 
-c. Create a new module that coordinates interactions between `a.ts` and `b.ts`, thereby eliminating direct circular imports.
+```
+✖ Found 2 circular dependencies!
 
-3. Test and Validate
-After refactoring, test your changes to ensure that the circular dependency has been resolved. Run your tests and check for any regressions.
+1) src/services/userService.ts > src/services/orderService.ts
+2) src/components/Button.tsx > src/components/Modal.tsx > src/components/Form.tsx
+```
 
-## Why i chose single comprehensive cycle output over multiple smaller cycles
-unlike madge, i chose to use a long chain of dependencies to represent the cycle instead of multiple smaller cycles because
+This means:
+- `userService.ts` imports `orderService.ts`, which imports `userService.ts`
+- `Button.tsx` → `Modal.tsx` → `Form.tsx` → `Button.tsx`
 
-- Single comprehensive cycle output is easier to understand and debug.
-- It provides a clear picture of the dependencies that need to be resolved.
+## Type-Only Imports
 
-Example:
+TypeScript's `import type` statements are erased at compile time and don't cause runtime circular dependencies. Use `--ignore-type-imports` to skip these:
 
-Multiple Smaller Cycles:
-`a.ts > b.ts > a.ts`
-`a.ts > c/index.ts > c/b.ts > c/a.ts > a.ts`
-`a.ts > c/index.ts > c/a.ts > a.ts`
+```bash
+# Source has 5 cycles, but only 4 are runtime cycles
+cdd ./src                        # Reports 5 cycles
+cdd --ignore-type-imports ./src  # Reports 4 cycles
+```
 
-- Single Comprehensive Cycle (SCC):
-`a.ts > c/index.ts > c/a.ts > c/b.ts > b.ts > a.ts`
+## Scanning Built Output
 
-## Steps to Cross-Compile for Linux on macOS
+You can scan compiled JavaScript to see actual runtime dependencies:
 
-Install Homebrew Tools for Cross-Compilation Use Homebrew to install a Linux-compatible gcc toolchain.
+```bash
+# Build your project first
+npm run build
+
+# Scan source vs built output
+cdd --exclude dist ./src    # TypeScript source (includes type imports)
+cdd --exclude src ./dist    # Built JavaScript (type imports erased)
+```
+
+Built output often has fewer cycles because TypeScript erases:
+- `import type` statements
+- Imports used only for type annotations
+
+## How It Works
+
+1. Recursively find all JS/TS files in the directory
+2. Parse each file and extract imports using [SWC](https://swc.rs/)
+3. Build a dependency graph
+4. Find strongly connected components using Kosaraju's algorithm
+5. Report unique cycles
+
+Exit codes:
+- `0` - Success (cycles match expected count, or no cycles if `-n` not specified)
+- `1` - Failure (cycles found, or count doesn't match `-n`)
+
+## Why Single Comprehensive Cycles?
+
+Unlike madge, CDD outputs one comprehensive chain per cycle instead of multiple overlapping fragments:
+
+**Multiple smaller cycles (madge style):**
+```
+a.ts > b.ts > a.ts
+a.ts > c/index.ts > c/b.ts > a.ts
+```
+
+**Single comprehensive cycle (CDD):**
+```
+a.ts > b.ts > c/index.ts > c/b.ts
+```
+
+This is easier to understand and debug.
+
+## Resolving Circular Dependencies
+
+1. **Extract shared code** - Move common functionality to a separate module
+2. **Use interfaces** - Depend on abstractions instead of concrete implementations
+3. **Introduce a coordinator** - Create a module that coordinates interactions
+4. **Lazy loading** - Use dynamic imports for non-critical dependencies
+
+## Development
+
+```bash
+# Run tests
+cargo test
+
+# Build release
+cargo build --release
+
+# Run against test fixture
+./target/release/cdd ./fixtures/example-monorepo/packages --exclude dist
+```
+
+### Release Scripts
+
+```bash
+# Bump version
+./scripts/bump-version.sh 0.4.0
+
+# Create and push release (runs tests, creates tag, pushes)
+./scripts/release.sh
+```
+
+### Cross-Compile for Linux on macOS
+
+Install Homebrew tools for cross-compilation:
 ```bash
 brew tap messense/macos-cross-toolchains
 brew install x86_64-unknown-linux-gnu
 ```
-This installs the x86_64-unknown-linux-gnu-gcc cross-compiler, which is required.
 
-Add the Toolchain to the Path Update your environment to include the cross-compiler.
+Add the toolchain to your environment:
 ```bash
 export CC_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-gcc
 export CXX_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-g++
 ```
-Add these lines to your shell config (e.g., .zshrc or .bashrc) if you plan to use this often.
 
-Install Rust Target for Linux Use rustup to install the x86_64-unknown-linux-gnu target.
+Install the Rust target and build:
 ```bash
 rustup target add x86_64-unknown-linux-gnu
-```
-
-Build the Project for the Target Use the --target flag to cross-compile the binary.
-```bash
 cargo build --release --target x86_64-unknown-linux-gnu
 ```
+
+## License
+
+MIT
