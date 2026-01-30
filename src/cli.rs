@@ -11,6 +11,8 @@ pub struct Cli {
     pub ignore_type_imports: bool,
     pub tsconfig_path: Option<String>,
     pub watch: bool,
+    /// Enable monorepo workspace package resolution.
+    pub workspace: bool,
 }
 
 /// Parses command-line arguments and returns a [`Cli`] configuration.
@@ -75,6 +77,12 @@ pub fn parse_args() -> Cli {
                 .help("Watch mode: re-run analysis when files change")
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("workspace")
+                .long("workspace")
+                .help("Enable monorepo workspace package resolution (detects npm/yarn/pnpm workspaces)")
+                .action(ArgAction::SetTrue),
+        )
         .get_matches();
 
     Cli {
@@ -94,5 +102,6 @@ pub fn parse_args() -> Cli {
             .unwrap_or(&false),
         tsconfig_path: matches.get_one::<String>("tsconfig").cloned(),
         watch: *matches.get_one::<bool>("watch").unwrap_or(&false),
+        workspace: *matches.get_one::<bool>("workspace").unwrap_or(&false),
     }
 }

@@ -1,0 +1,16 @@
+{
+  "name": "@acme/data-layer",
+  "version": "1.0.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./hooks": "./src/hooks/index.ts",
+    "./hooks/*": "./src/hooks/*.ts",
+    "./stores": "./src/stores/index.ts",
+    "./stores/*": "./src/stores/*.ts",
+    "./utils": "./src/utils/index.ts"
+  },
+  "dependencies": {
+    "@acme/design-system": "workspace:*",
+    "@acme/shared": "workspace:*"
+  }
+}

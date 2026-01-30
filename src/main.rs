@@ -5,6 +5,7 @@ mod graph;
 mod parser;
 mod tsconfig;
 mod watch;
+mod workspace;
 
 use ::colored::*;
 use config::{find_config, MergedConfig};
@@ -14,6 +15,7 @@ use parser::ParserOptions;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tsconfig::{load_tsconfig, PathAliases};
+use workspace::Workspace;
 
 fn main() {
     let cli = cli::parse_args();
@@ -64,6 +66,26 @@ fn main() {
         ignore_type_imports: merged.ignore_type_imports,
     };
 
+    // Load workspace if --workspace flag is set
+    let workspace = if cli.workspace {
+        match Workspace::detect(&canonical_dir) {
+            Some(ws) => {
+                log::info!(
+                    "Detected workspace with {} packages: {}",
+                    ws.packages.len(),
+                    ws.packages.keys().cloned().collect::<Vec<_>>().join(", ")
+                );
+                Some(ws)
+            }
+            None => {
+                log::warn!("--workspace flag set but no workspace configuration found");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     if cli.watch {
         // Watch mode: run analysis and re-run on file changes
         let dir = cli.dir.clone();
@@ -73,7 +95,7 @@ fn main() {
             log::info!("Starting analysis in directory: {}", dir);
             let start = Instant::now();
             let number_of_cycles =
-                run_analysis(&dir, &excludes, &parser_options, path_aliases.as_ref());
+                run_analysis(&dir, &excludes, &parser_options, path_aliases.as_ref(), workspace.as_ref());
             log::info!("Analysis completed in {:.2?}", start.elapsed());
 
             if merged.expected_cycles != number_of_cycles {
@@ -107,6 +129,7 @@ fn main() {
             &merged.exclude,
             &parser_options,
             path_aliases.as_ref(),
+            workspace.as_ref(),
         );
         log::info!("Analysis completed in {:.2?}", start.elapsed());
 
@@ -148,6 +171,7 @@ fn run_analysis(
     excludes: &[String],
     parser_options: &ParserOptions,
     path_aliases: Option<&PathAliases>,
+    workspace: Option<&Workspace>,
 ) -> usize {
     // Canonicalize the root directory to get its absolute path
     let root = PathBuf::from(dir)
@@ -159,7 +183,7 @@ fn run_analysis(
     info!("Collected {} files.", files.len());
 
     // Build the dependency graph
-    let graph = graph::build_dependency_graph(&files, parser_options, path_aliases);
+    let graph = graph::build_dependency_graph(&files, parser_options, path_aliases, workspace);
     info!(
         "Built dependency graph with {} nodes and {} edges.",
         graph.node_count(),

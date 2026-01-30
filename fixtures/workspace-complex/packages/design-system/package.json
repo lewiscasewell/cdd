@@ -1,0 +1,21 @@
+{
+  "name": "@acme/design-system",
+  "version": "1.0.0",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    },
+    "./components/*": {
+      "import": "./src/components/*.ts",
+      "require": "./dist/components/*.cjs"
+    },
+    "./buttons": "./src/components/buttons/index.ts",
+    "./forms": "./src/components/forms/index.ts",
+    "./modals": "./src/components/modals/index.ts"
+  },
+  "dependencies": {
+    "@acme/shared": "workspace:*"
+  }
+}

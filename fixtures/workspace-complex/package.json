@@ -1,0 +1,5 @@
+{
+  "name": "workspace-complex",
+  "private": true,
+  "workspaces": ["packages/*"]
+}

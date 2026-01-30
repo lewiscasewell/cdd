@@ -1,0 +1,13 @@
+{
+  "name": "@acme/shared",
+  "version": "1.0.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types/index.ts",
+    "./types/*": "./src/types/*.ts",
+    "./constants": "./src/constants/index.ts"
+  },
+  "dependencies": {
+    "@acme/data-layer": "workspace:*"
+  }
+}

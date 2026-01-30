@@ -1,6 +1,7 @@
 use crate::filesystem::normalize_path;
 use crate::parser::{get_imports_from_file, ParserOptions};
 use crate::tsconfig::PathAliases;
+use crate::workspace::Workspace;
 
 use colored::*;
 use log::{debug, info, warn};
@@ -22,11 +23,12 @@ fn get_static_extension_list() -> Vec<String> {
 }
 
 /// Builds the dependency graph from a list of files.
-/// Handles relative imports and path aliases. Parses files in parallel for performance.
+/// Handles relative imports, path aliases, and workspace packages. Parses files in parallel for performance.
 pub fn build_dependency_graph(
     files: &[PathBuf],
     options: &ParserOptions,
     path_aliases: Option<&PathAliases>,
+    workspace: Option<&Workspace>,
 ) -> Graph<PathBuf, ()> {
     let mut graph = Graph::new();
     let mut node_indices = HashMap::new();
@@ -54,7 +56,7 @@ pub fn build_dependency_graph(
     for (file, imports) in file_imports {
         debug!("Processing file: {:?}", file);
         for import in imports {
-            if let Some(resolved) = resolve_import(file, &import, &extensions, path_aliases) {
+            if let Some(resolved) = resolve_import(file, &import, &extensions, path_aliases, workspace) {
                 if let Some(&to_idx) = node_indices.get(&resolved) {
                     let from_idx = node_indices[file];
                     graph.add_edge(from_idx, to_idx, ());
@@ -75,13 +77,14 @@ pub fn build_dependency_graph(
 }
 
 /// Resolves an import to an absolute, normalized PathBuf.
-/// Handles relative imports and path aliases.
+/// Handles relative imports, path aliases, and workspace packages.
 /// Returns `None` if the import cannot be resolved.
 fn resolve_import(
     base: &Path,
     import: &str,
     extensions: &[String],
     path_aliases: Option<&PathAliases>,
+    workspace: Option<&Workspace>,
 ) -> Option<PathBuf> {
     debug!("Attempting to resolve import: '{}' from {:?}", import, base);
 
@@ -99,6 +102,15 @@ fn resolve_import(
             if let Some(resolved) = check_candidates(candidate, extensions) {
                 return Some(resolved);
             }
+        }
+    }
+
+    // Try workspace package resolution
+    if let Some(ws) = workspace {
+        if let Some(resolved) = ws.resolve(import) {
+            let normalized = normalize_path(&resolved);
+            debug!("Resolved workspace import '{}' to {:?}", import, normalized);
+            return Some(normalized);
         }
     }
 

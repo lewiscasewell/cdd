@@ -360,3 +360,126 @@ fn test_watch_flag_in_help() {
         .stdout(predicate::str::contains("--watch"))
         .stdout(predicate::str::contains("Watch mode"));
 }
+
+// ============ Workspace tests ============
+
+#[test]
+fn test_workspace_flag_in_help() {
+    cdd()
+        .args(["--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--workspace"))
+        .stdout(predicate::str::contains("monorepo"));
+}
+
+#[test]
+fn test_workspace_detects_packages() {
+    // Should detect workspace and show package count
+    cdd()
+        .args(["--workspace", "-n", "1", "./fixtures/workspace-monorepo"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Detected workspace with 3 packages"));
+}
+
+#[test]
+fn test_workspace_detects_cross_package_cycles() {
+    // Should detect circular dependency between @test/ui -> @test/utils -> @test/core -> @test/ui
+    cdd()
+        .args(["--workspace", "-n", "1", "./fixtures/workspace-monorepo"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Found 1 circular dependencies"));
+}
+
+#[test]
+fn test_workspace_without_flag_misses_package_imports() {
+    // Without --workspace flag, bare package imports are not resolved
+    // So no cycles would be detected (only relative imports are resolved)
+    cdd()
+        .args(["-n", "0", "./fixtures/workspace-monorepo"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("no circular dependencies found"));
+}
+
+#[test]
+fn test_workspace_shows_package_names() {
+    // Should show the detected package names
+    cdd()
+        .args(["--workspace", "-n", "1", "./fixtures/workspace-monorepo"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("@test/ui"))
+        .stderr(predicate::str::contains("@test/utils"))
+        .stderr(predicate::str::contains("@test/core"));
+}
+
+// ============ Complex workspace tests ============
+
+#[test]
+fn test_complex_workspace_detects_all_cycles() {
+    // Complex workspace with deep nesting, subpath imports, and multiple cycle types
+    cdd()
+        .args(["--workspace", "-n", "4", "./fixtures/workspace-complex"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Found 4 circular dependencies"));
+}
+
+#[test]
+fn test_complex_workspace_detects_internal_store_cycle() {
+    // authStore <-> userStore cycle within data-layer
+    cdd()
+        .args(["--workspace", "-n", "4", "./fixtures/workspace-complex"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("authStore.ts"))
+        .stderr(predicate::str::contains("userStore.ts"));
+}
+
+#[test]
+fn test_complex_workspace_detects_internal_hook_cycle() {
+    // useAuth <-> useUser cycle within data-layer
+    cdd()
+        .args(["--workspace", "-n", "4", "./fixtures/workspace-complex"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("useAuth.ts"))
+        .stderr(predicate::str::contains("useUser.ts"));
+}
+
+#[test]
+fn test_complex_workspace_detects_component_cycle() {
+    // buttons -> forms -> modals cycle within design-system
+    cdd()
+        .args(["--workspace", "-n", "4", "./fixtures/workspace-complex"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("buttons/index.ts"))
+        .stderr(predicate::str::contains("forms/index.ts"))
+        .stderr(predicate::str::contains("modals/index.ts"));
+}
+
+#[test]
+fn test_complex_workspace_detects_cross_package_cycle() {
+    // modalStore -> shared cycle via subpath imports
+    cdd()
+        .args(["--workspace", "-n", "4", "./fixtures/workspace-complex"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("modalStore.ts"))
+        .stderr(predicate::str::contains("shared/src/index.ts"));
+}
+
+#[test]
+fn test_complex_workspace_resolves_subpath_imports() {
+    // Tests that @acme/data-layer/stores/modalStore resolves correctly
+    // (this import is in design-system/modals)
+    cdd()
+        .args(["--workspace", "-n", "4", "./fixtures/workspace-complex"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("22 files")); // Should collect all 22 files
+}
