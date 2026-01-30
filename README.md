@@ -42,6 +42,9 @@ cdd --watch ./src
 
 # Use TypeScript path aliases
 cdd --tsconfig ./tsconfig.json ./src
+
+# Monorepo: detect cycles between workspace packages
+cdd --workspace ./packages
 ```
 
 ## Options
@@ -58,6 +61,7 @@ Options:
   -s, --silent                   Suppress all output
   -w, --watch                    Watch mode: re-run analysis on file changes
       --tsconfig <PATH>          Path to tsconfig.json for resolving path aliases
+      --workspace                Enable monorepo workspace package resolution
   -h, --help                     Print help
   -V, --version                  Print version
 ```
@@ -108,6 +112,8 @@ CDD supports configuration files to avoid repeating options. Create `.cddrc.json
 
 CDD searches for config files starting from the target directory and walking up. CLI arguments take precedence over config file values.
 
+Note: The `--workspace` flag is CLI-only and cannot be set in the config file.
+
 ## Watch Mode
 
 Use `--watch` to continuously monitor for changes and re-run analysis:
@@ -140,6 +146,59 @@ Example `tsconfig.json`:
       "@/*": ["src/*"],
       "@components/*": ["src/components/*"]
     }
+  }
+}
+```
+
+## Monorepo Workspace Resolution
+
+CDD can detect circular dependencies between packages in a monorepo using the `--workspace` flag:
+
+```bash
+cdd --workspace ./packages
+```
+
+This resolves bare package imports like `@acme/ui` to their actual source files, enabling detection of cross-package cycles:
+
+```
+✖ Found 1 circular dependencies!
+
+1) packages/core/src/index.ts > packages/ui/src/index.ts > packages/utils/src/index.ts
+```
+
+### Supported Workspace Formats
+
+| Format | Config File | Field |
+|--------|-------------|-------|
+| npm/yarn | `package.json` | `workspaces` |
+| pnpm | `pnpm-workspace.yaml` | `packages` |
+
+### Package Resolution
+
+CDD resolves package imports in this order:
+
+1. **`exports` field** - Conditional exports (`import`/`require`/`default`), subpath exports, wildcards
+2. **`module` field** - ES module entry point
+3. **`main` field** - CommonJS entry point
+4. **Convention** - `src/index.ts`, `index.ts`, `index.js`
+
+### Subpath Imports
+
+Deep imports into packages are resolved via the `exports` field:
+
+```typescript
+// Resolves @acme/ui/button to packages/ui/src/components/button.ts
+import { Button } from "@acme/ui/button";
+```
+
+With package.json:
+```json
+{
+  "name": "@acme/ui",
+  "exports": {
+    ".": "./src/index.ts",
+    "./button": "./src/components/button.ts",
+    "./*": "./src/*.ts"
   }
 }
 ```
