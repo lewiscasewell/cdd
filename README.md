@@ -36,6 +36,12 @@ cdd --exclude src ./dist
 
 # CI mode: fail if cycles don't match expected count
 cdd -n 0 ./src  # Fail if any cycles found
+
+# Watch mode: re-run on file changes
+cdd --watch ./src
+
+# Use TypeScript path aliases
+cdd --tsconfig ./tsconfig.json ./src
 ```
 
 ## Options
@@ -50,6 +56,8 @@ Options:
   -d, --debug                    Enable debug logging
   -n, --numberOfCycles <N>       Expected number of cycles [default: 0]
   -s, --silent                   Suppress all output
+  -w, --watch                    Watch mode: re-run analysis on file changes
+      --tsconfig <PATH>          Path to tsconfig.json for resolving path aliases
   -h, --help                     Print help
   -V, --version                  Print version
 ```
@@ -84,6 +92,57 @@ Options:
 This means:
 - `userService.ts` imports `orderService.ts`, which imports `userService.ts`
 - `Button.tsx` → `Modal.tsx` → `Form.tsx` → `Button.tsx`
+
+## Configuration File
+
+CDD supports configuration files to avoid repeating options. Create `.cddrc.json` or `cdd.config.json` in your project root:
+
+```json
+{
+  "exclude": ["node_modules", "dist", "__tests__"],
+  "ignore_type_imports": true,
+  "expected_cycles": 0,
+  "tsconfig_path": "./tsconfig.json"
+}
+```
+
+CDD searches for config files starting from the target directory and walking up. CLI arguments take precedence over config file values.
+
+## Watch Mode
+
+Use `--watch` to continuously monitor for changes and re-run analysis:
+
+```bash
+cdd --watch ./src
+```
+
+The terminal clears between runs, showing fresh results each time. Press `Ctrl+C` to stop.
+
+## TypeScript Path Aliases
+
+CDD can resolve TypeScript path aliases from your `tsconfig.json`:
+
+```bash
+cdd --tsconfig ./tsconfig.json ./src
+```
+
+Supports:
+- `compilerOptions.paths` mappings (e.g., `@/*` → `src/*`)
+- `compilerOptions.baseUrl` for non-relative imports
+- `extends` chains (inherits from parent configs)
+
+Example `tsconfig.json`:
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@components/*": ["src/components/*"]
+    }
+  }
+}
+```
 
 ## Type-Only Imports
 

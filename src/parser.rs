@@ -1,3 +1,4 @@
+use log::warn;
 use std::path::Path;
 use std::rc::Rc;
 use swc_common::SourceMap;
@@ -12,6 +13,13 @@ pub struct ParserOptions {
     pub ignore_type_imports: bool,
 }
 
+/// Extracts import paths from a JavaScript/TypeScript file.
+///
+/// Parses the file and collects all import sources including:
+/// - ES module imports (`import { x } from './foo'`)
+/// - Re-exports (`export * from './foo'`)
+/// - CommonJS requires (`require('./foo')`)
+/// - Dynamic imports (`import('./foo')`)
 pub fn get_imports_from_file(path: &Path, options: &ParserOptions) -> Vec<String> {
     let module = match parse_file_to_ast(path) {
         Some(m) => m,
@@ -90,7 +98,14 @@ fn parse_file_to_ast(path: &Path) -> Option<Module> {
     match parser.parse_module() {
         Ok(module) => Some(module),
         Err(err) => {
-            eprintln!("Failed to parse {}: {:?}", path.display(), err);
+            warn!(
+                "Failed to parse '{}': {}",
+                path.display(),
+                format!("{:?}", err)
+                    .lines()
+                    .next()
+                    .unwrap_or("Unknown error")
+            );
             None
         }
     }

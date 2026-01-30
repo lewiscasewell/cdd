@@ -127,7 +127,9 @@ fn test_help_flag() {
         .assert()
         .success()
         .stdout(predicate::str::contains("exclude"))
-        .stdout(predicate::str::contains("numberOfCycles"));
+        .stdout(predicate::str::contains("numberOfCycles"))
+        .stdout(predicate::str::contains("watch"))
+        .stdout(predicate::str::contains("tsconfig"));
 }
 
 #[test]
@@ -260,4 +262,101 @@ fn test_commonjs_require_cycle_detected() {
         .success()
         .stderr(predicate::str::contains("serviceA.js"))
         .stderr(predicate::str::contains("serviceB.js"));
+}
+
+// ============ Config file tests ============
+// Note: Config file tests use dedicated fixtures to avoid parallel test interference.
+
+#[test]
+fn test_config_file_is_loaded() {
+    // Use dedicated config-test-a fixture (empty directory)
+    let config_path = "./fixtures/config-test-a/.cddrc.json";
+
+    // Clean up any leftover config file first
+    let _ = std::fs::remove_file(config_path);
+
+    // Create a config file expecting 0 cycles (no files = no cycles)
+    std::fs::write(config_path, r#"{"expected_cycles": 0}"#).unwrap();
+
+    // Should succeed with config file settings
+    let result = cdd()
+        .args(["./fixtures/config-test-a"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("no circular dependencies found"));
+
+    // Clean up
+    let _ = std::fs::remove_file(config_path);
+
+    result.stderr(predicate::str::contains("Expected 0 cycle(s) and found 0"));
+}
+
+#[test]
+fn test_cli_overrides_config_file() {
+    // Use dedicated config-test-b fixture
+    let config_path = "./fixtures/config-test-b/.cddrc.json";
+
+    // Clean up any leftover config file first
+    let _ = std::fs::remove_file(config_path);
+
+    // Create a config file expecting 99 cycles (wrong)
+    std::fs::write(config_path, r#"{"expected_cycles": 99}"#).unwrap();
+
+    // CLI -n should override config file's expected_cycles
+    let result = cdd()
+        .args(["-n", "0", "./fixtures/config-test-b"])
+        .assert()
+        .success();
+
+    // Clean up
+    let _ = std::fs::remove_file(config_path);
+
+    result.stderr(predicate::str::contains("Expected 0 cycle(s) and found 0"));
+}
+
+// ============ Timing output tests ============
+
+#[test]
+fn test_analysis_timing_is_shown() {
+    // Use -n 0 and a directory with no cycles to ensure success
+    cdd()
+        .args([
+            "-n",
+            "0",
+            "./fixtures/example-monorepo/packages/api/src/utils",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Analysis completed in"));
+}
+
+// ============ Tsconfig flag tests ============
+
+#[test]
+fn test_tsconfig_flag_is_accepted() {
+    // Should accept --tsconfig flag without error
+    cdd()
+        .args([
+            "--tsconfig",
+            "./fixtures/example-monorepo/packages/api/tsconfig.json",
+            "-n",
+            "1",
+            "--exclude",
+            "dist",
+            "./fixtures/example-monorepo/packages/api",
+        ])
+        .assert()
+        .success();
+}
+
+// ============ Watch flag tests ============
+
+#[test]
+fn test_watch_flag_in_help() {
+    cdd()
+        .args(["--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--watch"))
+        .stdout(predicate::str::contains("Watch mode"));
 }

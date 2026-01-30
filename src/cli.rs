@@ -1,14 +1,19 @@
 use clap::{Arg, ArgAction, Command};
 
+/// Command-line interface configuration.
 pub struct Cli {
     pub dir: String,
     pub exclude: Vec<String>,
     pub debug: bool,
-    pub number_of_cycles: usize,
+    /// Expected number of cycles. None means not specified on CLI.
+    pub number_of_cycles: Option<usize>,
     pub silent: bool,
     pub ignore_type_imports: bool,
+    pub tsconfig_path: Option<String>,
+    pub watch: bool,
 }
 
+/// Parses command-line arguments and returns a [`Cli`] configuration.
 pub fn parse_args() -> Cli {
     let matches = Command::new("Circular Dependency Detector")
         .version(env!("CARGO_PKG_VERSION"))
@@ -39,10 +44,9 @@ pub fn parse_args() -> Cli {
             Arg::new("number_of_cycles")
                 .short('n')
                 .long("numberOfCycles")
-                .help("Specify the expected number of cycles")
+                .help("Specify the expected number of cycles [default: 0]")
                 .num_args(1)
-                .value_parser(clap::value_parser!(usize))
-                .default_value("0"),
+                .value_parser(clap::value_parser!(usize)),
         )
         .arg(
             Arg::new("silent")
@@ -58,6 +62,19 @@ pub fn parse_args() -> Cli {
                 .help("Ignore type-only imports (import type { Foo }). These are erased at compile time and don't cause runtime cycles.")
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("tsconfig")
+                .long("tsconfig")
+                .help("Path to tsconfig.json for resolving path aliases")
+                .num_args(1),
+        )
+        .arg(
+            Arg::new("watch")
+                .short('w')
+                .long("watch")
+                .help("Watch mode: re-run analysis when files change")
+                .action(ArgAction::SetTrue),
+        )
         .get_matches();
 
     Cli {
@@ -68,12 +85,14 @@ pub fn parse_args() -> Cli {
         exclude: matches
             .get_many::<String>("exclude")
             .map(|vals| vals.cloned().collect())
-            .unwrap_or_else(Vec::new),
+            .unwrap_or_default(),
         debug: *matches.get_one::<bool>("debug").unwrap_or(&false),
-        number_of_cycles: *matches
-            .get_one::<usize>("number_of_cycles")
-            .expect("number_of_cycles has a default value"),
+        number_of_cycles: matches.get_one::<usize>("number_of_cycles").copied(),
         silent: *matches.get_one::<bool>("silent").unwrap_or(&false),
-        ignore_type_imports: *matches.get_one::<bool>("ignore_type_imports").unwrap_or(&false),
+        ignore_type_imports: *matches
+            .get_one::<bool>("ignore_type_imports")
+            .unwrap_or(&false),
+        tsconfig_path: matches.get_one::<String>("tsconfig").cloned(),
+        watch: *matches.get_one::<bool>("watch").unwrap_or(&false),
     }
 }

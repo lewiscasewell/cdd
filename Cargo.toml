@@ -23,6 +23,8 @@ serde_yaml = "0.9.34"
 regex = "1.11.1"
 swc_ecma_visit = "5.0.0"
 colored = "2.2.0"
+notify = "6.1"
+notify-debouncer-mini = "0.4"
 
 [dev-dependencies]
 assert_cmd = "2.0"

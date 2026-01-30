@@ -1,20 +1,14 @@
+use crate::filesystem::normalize_path;
 use crate::parser::{get_imports_from_file, ParserOptions};
+use crate::tsconfig::PathAliases;
 
 use colored::*;
 use log::{debug, info, warn};
 use petgraph::algo::kosaraju_scc;
 use petgraph::Graph;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-
-/// Normalizes a path by resolving it to an absolute path
-/// and removing redundant components.
-fn normalize_path(path: &PathBuf) -> PathBuf {
-    match path.canonicalize() {
-        Ok(canonical) => canonical,
-        Err(_) => path.clone(),
-    }
-}
 
 fn get_static_extension_list() -> Vec<String> {
     vec![
@@ -28,8 +22,12 @@ fn get_static_extension_list() -> Vec<String> {
 }
 
 /// Builds the dependency graph from a list of files.
-/// Handles only relative imports.
-pub fn build_dependency_graph(files: &[PathBuf], options: &ParserOptions) -> Graph<PathBuf, ()> {
+/// Handles relative imports and path aliases. Parses files in parallel for performance.
+pub fn build_dependency_graph(
+    files: &[PathBuf],
+    options: &ParserOptions,
+    path_aliases: Option<&PathAliases>,
+) -> Graph<PathBuf, ()> {
     let mut graph = Graph::new();
     let mut node_indices = HashMap::new();
 
@@ -43,11 +41,20 @@ pub fn build_dependency_graph(files: &[PathBuf], options: &ParserOptions) -> Gra
         debug!("Added node: {:?}", file);
     }
 
-    for file in files {
-        let imports = get_imports_from_file(file, options);
+    // Parse files in parallel and collect imports
+    let file_imports: Vec<_> = files
+        .par_iter()
+        .map(|file| {
+            let imports = get_imports_from_file(file, options);
+            (file, imports)
+        })
+        .collect();
+
+    // Build edges from the collected imports (must be sequential for graph mutation)
+    for (file, imports) in file_imports {
         debug!("Processing file: {:?}", file);
         for import in imports {
-            if let Some(resolved) = resolve_import(file, &import, &extensions) {
+            if let Some(resolved) = resolve_import(file, &import, &extensions, path_aliases) {
                 if let Some(&to_idx) = node_indices.get(&resolved) {
                     let from_idx = node_indices[file];
                     graph.add_edge(from_idx, to_idx, ());
@@ -67,22 +74,40 @@ pub fn build_dependency_graph(files: &[PathBuf], options: &ParserOptions) -> Gra
     graph
 }
 
-/// Resolves a relative import to an absolute, normalized PathBuf.
+/// Resolves an import to an absolute, normalized PathBuf.
+/// Handles relative imports and path aliases.
 /// Returns `None` if the import cannot be resolved.
-fn resolve_import(base: &Path, import: &str, extensions: &Vec<String>) -> Option<PathBuf> {
-    if !import.starts_with('.') {
-        return None; // Only handle relative imports
-    }
-
-    let candidate = base.parent()?.join(import);
+fn resolve_import(
+    base: &Path,
+    import: &str,
+    extensions: &[String],
+    path_aliases: Option<&PathAliases>,
+) -> Option<PathBuf> {
     debug!("Attempting to resolve import: '{}' from {:?}", import, base);
 
-    check_candidates(candidate, extensions)
+    // Try relative imports first
+    if import.starts_with('.') {
+        let candidate = base.parent()?.join(import);
+        if let Some(resolved) = check_candidates(candidate, extensions) {
+            return Some(resolved);
+        }
+    }
+
+    // Try path aliases if configured
+    if let Some(aliases) = path_aliases {
+        if let Some(candidate) = aliases.resolve(import) {
+            if let Some(resolved) = check_candidates(candidate, extensions) {
+                return Some(resolved);
+            }
+        }
+    }
+
+    None
 }
 
-fn handle_if_file(path: &PathBuf) -> Option<PathBuf> {
+fn handle_if_file(path: &Path) -> Option<PathBuf> {
     if path.is_file() {
-        let canonical = normalize_path(&path);
+        let canonical = normalize_path(path);
         debug!("check_candidates: Found file directly {:?}", canonical);
         return Some(canonical);
     }
@@ -91,7 +116,7 @@ fn handle_if_file(path: &PathBuf) -> Option<PathBuf> {
 
 /// Checks various possibilities for the import path.
 /// Returns the resolved, canonicalized PathBuf if found.
-fn check_candidates(candidate: PathBuf, extensions: &Vec<String>) -> Option<PathBuf> {
+fn check_candidates(candidate: PathBuf, extensions: &[String]) -> Option<PathBuf> {
     if let Some(canonical) = handle_if_file(&candidate) {
         return Some(canonical);
     }
@@ -141,17 +166,25 @@ pub fn find_all_cycles(graph: &Graph<PathBuf, ()>) -> Vec<Vec<&PathBuf>> {
             // A strongly connected component with more than one node indicates a cycle
             let cycle = scc
                 .iter()
-                .map(|node_index| graph.node_weight(*node_index).unwrap())
+                .map(|node_index| {
+                    graph
+                        .node_weight(*node_index)
+                        .expect("node index from SCC must exist in graph")
+                })
                 .collect::<Vec<_>>();
             cycles.push(cycle);
         } else {
             // Check for self-loop
             let node = scc[0];
             if graph.contains_edge(node, node) {
-                cycles.push(vec![graph.node_weight(node).unwrap()]);
+                cycles.push(vec![graph
+                    .node_weight(node)
+                    .expect("node index from SCC must exist in graph")]);
                 debug!(
                     "Detected self-loop cycle for node: {:?}",
-                    graph.node_weight(node).unwrap()
+                    graph
+                        .node_weight(node)
+                        .expect("node index from SCC must exist in graph")
                 );
             }
         }
@@ -175,8 +208,11 @@ fn deduplicate_cycles<'a>(cycles: &[Vec<&'a PathBuf>]) -> Vec<Vec<&'a PathBuf>> 
         let min_path = cycle
             .iter()
             .min_by_key(|path| path.to_string_lossy())
-            .unwrap();
-        let min_index = cycle.iter().position(|&path| path == *min_path).unwrap();
+            .expect("cycle is non-empty, checked above");
+        let min_index = cycle
+            .iter()
+            .position(|&path| path == *min_path)
+            .expect("min_path came from cycle, so it must exist");
 
         // Rotate the cycle so that min_path is first
         let rotated_cycle: Vec<&PathBuf> = cycle[min_index..]
@@ -204,7 +240,7 @@ fn deduplicate_cycles<'a>(cycles: &[Vec<&'a PathBuf>]) -> Vec<Vec<&'a PathBuf>> 
 }
 
 /// Integrates cycle finding using Kosaraju's algorithm and deduplication.
-pub fn get_unique_cycles<'a>(graph: &'a Graph<PathBuf, ()>) -> Vec<Vec<&'a PathBuf>> {
+pub fn get_unique_cycles(graph: &Graph<PathBuf, ()>) -> Vec<Vec<&PathBuf>> {
     let cycles = find_all_cycles(graph);
     deduplicate_cycles(&cycles)
 }

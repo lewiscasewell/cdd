@@ -1,12 +1,18 @@
 use log::debug;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
-fn normalize_path(path: &PathBuf) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.clone())
+/// Normalizes a path by resolving it to an absolute path
+/// and removing redundant components.
+pub fn normalize_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Collects all TypeScript and JavaScript files from a directory.
+///
+/// Walks the directory tree, filtering out excluded directories and
+/// returning only files with supported extensions (.ts, .tsx, .js, .jsx, .cjs, .mjs).
 pub fn collect_files(dir: &str, excludes: &[String]) -> Vec<PathBuf> {
     let exclude_set: HashSet<_> = excludes.iter().collect();
     let base_dir = PathBuf::from(dir)
@@ -18,14 +24,11 @@ pub fn collect_files(dir: &str, excludes: &[String]) -> Vec<PathBuf> {
         .filter_entry(|e| should_include(e, &exclude_set))
         .filter_map(|e| e.ok())
         .filter(|entry| {
-            if entry.file_type().is_file() {
-                match entry.path().extension().and_then(|ext| ext.to_str()) {
-                    Some("ts" | "tsx" | "js" | "jsx" | "cjs" | "mjs") => true,
-                    _ => false,
-                }
-            } else {
-                false
-            }
+            entry.file_type().is_file()
+                && matches!(
+                    entry.path().extension().and_then(|ext| ext.to_str()),
+                    Some("ts" | "tsx" | "js" | "jsx" | "cjs" | "mjs")
+                )
         })
         .map(|e| {
             let absolute_path = e
