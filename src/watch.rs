@@ -1,3 +1,7 @@
+//! Watch mode for file change detection.
+//!
+//! This module is only available when the `watch` feature is enabled.
+
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use std::path::Path;

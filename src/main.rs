@@ -6,6 +6,7 @@ mod output;
 mod parser;
 mod tsconfig;
 mod utils;
+#[cfg(feature = "watch")]
 mod watch;
 mod workspace;
 
@@ -129,6 +130,7 @@ fn main() {
         }
     };
 
+    #[cfg(feature = "watch")]
     if cli.watch {
         // Watch mode: run analysis and re-run on file changes
         let dir = cli.dir.clone();
@@ -190,7 +192,10 @@ fn main() {
             );
             std::process::exit(1);
         }
-    } else {
+        return;
+    }
+
+    {
         // Single run mode
         if output_format != OutputFormat::Json {
             log::info!("Starting analysis in directory: {}", cli.dir);

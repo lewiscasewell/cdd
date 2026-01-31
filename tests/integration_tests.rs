@@ -128,7 +128,6 @@ fn test_help_flag() {
         .success()
         .stdout(predicate::str::contains("exclude"))
         .stdout(predicate::str::contains("numberOfCycles"))
-        .stdout(predicate::str::contains("watch"))
         .stdout(predicate::str::contains("tsconfig"));
 }
 
@@ -352,6 +351,7 @@ fn test_tsconfig_flag_is_accepted() {
 // ============ Watch flag tests ============
 
 #[test]
+#[cfg(feature = "watch")]
 fn test_watch_flag_in_help() {
     cdd()
         .args(["--help"])

@@ -211,6 +211,8 @@ cdd --json ./src
 
 ## Watch Mode
 
+> **Note:** Watch mode is only available when building from source with the `watch` feature (enabled by default). Pre-built release binaries do not include watch mode to ensure cross-platform compatibility.
+
 Use `--watch` to continuously monitor for changes and re-run analysis:
 
 ```bash

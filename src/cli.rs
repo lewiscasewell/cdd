@@ -10,6 +10,7 @@ pub struct Cli {
     pub silent: bool,
     pub ignore_type_imports: bool,
     pub tsconfig_path: Option<String>,
+    #[cfg(feature = "watch")]
     pub watch: bool,
     /// Disable auto-detection of monorepo workspaces.
     pub no_workspace: bool,
@@ -28,8 +29,9 @@ pub struct Cli {
 }
 
 /// Parses command-line arguments and returns a [`Cli`] configuration.
+#[allow(unused_mut)]
 pub fn parse_args() -> Cli {
-    let matches = Command::new("Circular Dependency Detector")
+    let mut cmd = Command::new("Circular Dependency Detector")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Lewis Casewell")
         .about("Detects circular dependencies in your project")
@@ -89,13 +91,6 @@ pub fn parse_args() -> Cli {
                 .action(ArgAction::SetTrue),
         )
         .arg(
-            Arg::new("watch")
-                .short('w')
-                .long("watch")
-                .help("Watch mode: re-run analysis when files change")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
             Arg::new("no_workspace")
                 .long("no-workspace")
                 .help("Disable auto-detection of monorepo workspaces")
@@ -130,8 +125,20 @@ pub fn parse_args() -> Cli {
                 .long("init")
                 .help("Initialize .cddrc.json with current cycles as allowed baseline")
                 .action(ArgAction::SetTrue),
-        )
-        .get_matches();
+        );
+
+    #[cfg(feature = "watch")]
+    {
+        cmd = cmd.arg(
+            Arg::new("watch")
+                .short('w')
+                .long("watch")
+                .help("Watch mode: re-run analysis when files change")
+                .action(ArgAction::SetTrue),
+        );
+    }
+
+    let matches = cmd.get_matches();
 
     Cli {
         dir: matches
@@ -150,6 +157,7 @@ pub fn parse_args() -> Cli {
             .unwrap_or(&false),
         tsconfig_path: matches.get_one::<String>("tsconfig").cloned(),
         no_tsconfig: *matches.get_one::<bool>("no_tsconfig").unwrap_or(&false),
+        #[cfg(feature = "watch")]
         watch: *matches.get_one::<bool>("watch").unwrap_or(&false),
         no_workspace: *matches.get_one::<bool>("no_workspace").unwrap_or(&false),
         json: *matches.get_one::<bool>("json").unwrap_or(&false),
