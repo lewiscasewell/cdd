@@ -38,7 +38,8 @@ pub enum ExportValue {
 /// Workspace configuration containing all discovered packages.
 #[derive(Debug)]
 pub struct Workspace {
-    /// Root directory of the workspace
+    /// Root directory of the workspace (retained for potential future use)
+    #[allow(dead_code)]
     pub root: PathBuf,
     /// Map of package names to their info
     pub packages: HashMap<String, PackageInfo>,
@@ -294,7 +295,9 @@ impl Workspace {
                 }
 
                 // Try as directory with index file
-                let index_path = info.path.join(format!("{}{}/index{}", prefix, subpath, ext));
+                let index_path = info
+                    .path
+                    .join(format!("{}{}/index{}", prefix, subpath, ext));
                 if index_path.exists() {
                     debug!("Resolved subpath via index file: {:?}", index_path);
                     return Some(index_path);
@@ -369,9 +372,13 @@ impl Workspace {
 
                         // Try adding extensions
                         for ext in &[".ts", ".tsx", ".js", ".jsx"] {
-                            let with_ext = resolved_path.with_extension(ext.trim_start_matches('.'));
+                            let with_ext =
+                                resolved_path.with_extension(ext.trim_start_matches('.'));
                             if with_ext.exists() {
-                                debug!("Resolved via wildcard export with extension: {:?}", with_ext);
+                                debug!(
+                                    "Resolved via wildcard export with extension: {:?}",
+                                    with_ext
+                                );
                                 return Some(with_ext);
                             }
                         }
@@ -467,7 +474,11 @@ mod tests {
         )
         .unwrap();
         fs::create_dir_all(utils_path.join("src")).unwrap();
-        fs::write(utils_path.join("src/index.ts"), "export const utils = true;").unwrap();
+        fs::write(
+            utils_path.join("src/index.ts"),
+            "export const utils = true;",
+        )
+        .unwrap();
         fs::write(
             utils_path.join("src/helpers.ts"),
             "export const helpers = true;",

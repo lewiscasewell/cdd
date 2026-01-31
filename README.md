@@ -22,7 +22,7 @@ cdd [OPTIONS] <DIR>
 ### Examples
 
 ```bash
-# Scan a directory
+# Scan a directory (auto-detects workspace and tsconfig)
 cdd ./src
 
 # Exclude directories
@@ -31,20 +31,20 @@ cdd --exclude node_modules --exclude dist ./src
 # Ignore type-only imports (recommended for TypeScript)
 cdd --ignore-type-imports ./src
 
-# Scan built JavaScript output
-cdd --exclude src ./dist
+# CI mode: fail if any new cycles are found
+cdd -n 0 ./src
 
-# CI mode: fail if cycles don't match expected count
-cdd -n 0 ./src  # Fail if any cycles found
+# Initialize config with current cycles as baseline
+cdd --init ./src
 
 # Watch mode: re-run on file changes
 cdd --watch ./src
 
-# Use TypeScript path aliases
-cdd --tsconfig ./tsconfig.json ./src
+# JSON output for tooling integration
+cdd --json ./src
 
-# Monorepo: detect cycles between workspace packages
-cdd --workspace ./packages
+# CI with hash validation (detects when cycles change)
+cdd --expected-hash abc123def456 ./src
 ```
 
 ## Options
@@ -60,8 +60,14 @@ Options:
   -n, --numberOfCycles <N>       Expected number of cycles [default: 0]
   -s, --silent                   Suppress all output
   -w, --watch                    Watch mode: re-run analysis on file changes
-      --tsconfig <PATH>          Path to tsconfig.json for resolving path aliases
-      --workspace                Enable monorepo workspace package resolution
+      --tsconfig <PATH>          Path to tsconfig.json (auto-detected by default)
+      --no-tsconfig              Disable tsconfig auto-detection
+      --no-workspace             Disable workspace auto-detection
+      --json                     Output results as JSON
+      --expected-hash <HASH>     Fail if cycle hash doesn't match (for CI)
+      --allowlist <PATH>         Path to file listing allowed cycles
+      --update-hash              Update expected_hash in config file
+      --init                     Initialize config with current cycles as baseline
   -h, --help                     Print help
   -V, --version                  Print version
 ```
@@ -87,15 +93,32 @@ Options:
 ## Example Output
 
 ```
-✖ Found 2 circular dependencies!
+X Found 2 circular dependencies!
 
-1) src/services/userService.ts > src/services/orderService.ts
-2) src/components/Button.tsx > src/components/Modal.tsx > src/components/Form.tsx
+1) Circular dependency [b19d1af3c370]:
+   src/services/orderService.ts:3
+   | import { UserService } from './userService';
+   v
+   src/services/userService.ts:3
+   | import { OrderService } from './orderService';
+   ^-- (cycle)
+
+2) Circular dependency [44ff849f72f4]:
+   src/components/Button.tsx:3
+   | import { Modal } from './Modal';
+   v
+   src/components/Modal.tsx:3
+   | import { Form } from './Form';
+   v
+   src/components/Form.tsx:3
+   | import { Button } from './Button';
+   ^-- (cycle)
 ```
 
-This means:
-- `userService.ts` imports `orderService.ts`, which imports `userService.ts`
-- `Button.tsx` → `Modal.tsx` → `Form.tsx` → `Button.tsx`
+Each cycle shows:
+- A unique hash for identification
+- The exact file and line number of each import
+- The import statement causing the dependency
 
 ## Configuration File
 
@@ -106,13 +129,85 @@ CDD supports configuration files to avoid repeating options. Create `.cddrc.json
   "exclude": ["node_modules", "dist", "__tests__"],
   "ignore_type_imports": true,
   "expected_cycles": 0,
-  "tsconfig_path": "./tsconfig.json"
+  "expected_hash": "abc123def456",
+  "allowed_cycles": [
+    {
+      "files": ["src/a.ts", "src/b.ts"],
+      "reason": "Known issue, tracked in JIRA-123"
+    }
+  ]
 }
 ```
 
+### Quick Setup with `--init`
+
+The easiest way to set up a config is to use `--init`:
+
+```bash
+cdd --init ./src
+```
+
+This creates `.cddrc.json` with all current cycles in the allowlist. After init:
+- Existing cycles are allowed (won't cause CI failures)
+- New cycles will cause failures
+- You can gradually fix cycles and remove them from the allowlist
+
 CDD searches for config files starting from the target directory and walking up. CLI arguments take precedence over config file values.
 
-Note: The `--workspace` flag is CLI-only and cannot be set in the config file.
+## CI Integration
+
+### Basic: Fail on Any Cycles
+
+```bash
+cdd -n 0 ./src
+```
+
+### Recommended: Hash-Based Validation
+
+Use `--expected-hash` to detect when cycles change, even if the count stays the same:
+
+```bash
+# First, get the current hash
+cdd ./src
+# Output: Cycles hash: abc123def456
+
+# Then use it in CI
+cdd --expected-hash abc123def456 ./src
+```
+
+Update the hash when cycles change intentionally:
+```bash
+cdd --update-hash ./src
+```
+
+### JSON Output
+
+Use `--json` for integration with other tools:
+
+```bash
+cdd --json ./src
+```
+
+```json
+{
+  "total_files": 150,
+  "total_cycles": 2,
+  "cycles_hash": "abc123def456",
+  "cycles": [
+    {
+      "hash": "b19d1af3c370",
+      "edges": [
+        {
+          "from_file": "src/a.ts",
+          "to_file": "src/b.ts",
+          "line": 3,
+          "import_text": "import { b } from './b';"
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## Watch Mode
 
@@ -126,11 +221,13 @@ The terminal clears between runs, showing fresh results each time. Press `Ctrl+C
 
 ## TypeScript Path Aliases
 
-CDD can resolve TypeScript path aliases from your `tsconfig.json`:
+CDD automatically detects and uses `tsconfig.json` in your project root for path alias resolution. You can also specify a custom path:
 
 ```bash
-cdd --tsconfig ./tsconfig.json ./src
+cdd --tsconfig ./packages/app/tsconfig.json ./src
 ```
+
+Use `--no-tsconfig` to disable auto-detection.
 
 Supports:
 - `compilerOptions.paths` mappings (e.g., `@/*` → `src/*`)
@@ -152,19 +249,28 @@ Example `tsconfig.json`:
 
 ## Monorepo Workspace Resolution
 
-CDD can detect circular dependencies between packages in a monorepo using the `--workspace` flag:
+CDD automatically detects monorepo workspaces and resolves bare package imports like `@acme/ui` to their actual source files:
 
 ```bash
-cdd --workspace ./packages
+cdd ./packages
 ```
 
-This resolves bare package imports like `@acme/ui` to their actual source files, enabling detection of cross-package cycles:
+This enables detection of cross-package cycles:
 
 ```
-✖ Found 1 circular dependencies!
-
-1) packages/core/src/index.ts > packages/ui/src/index.ts > packages/utils/src/index.ts
+1) Circular dependency [d1bd5c39d882]:
+   packages/core/src/index.ts:2
+   | import { UI_VERSION } from "@acme/ui";
+   v
+   packages/ui/src/index.ts:2
+   | import { formatDate } from "@acme/utils";
+   v
+   packages/utils/src/index.ts:2
+   | import { getConfig } from "@acme/core";
+   ^-- (cycle)
 ```
+
+Use `--no-workspace` to disable auto-detection if needed.
 
 ### Supported Workspace Formats
 

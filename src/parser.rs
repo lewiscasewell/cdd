@@ -1,10 +1,50 @@
 use log::warn;
+use serde::Serialize;
 use std::path::Path;
-use std::rc::Rc;
-use swc_common::SourceMap;
+use swc_common::sync::Lrc;
+use swc_common::{SourceFile, SourceMap, Span};
 use swc_ecma_ast::{EsVersion, *};
 use swc_ecma_parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_visit::{noop_visit_type, Visit, VisitWith};
+
+/// The kind of import statement
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum ImportKind {
+    /// ES module import: `import { x } from './foo'`
+    EsModule,
+    /// CommonJS require: `require('./foo')`
+    CommonJs,
+    /// Dynamic import: `import('./foo')`
+    Dynamic,
+    /// Re-export: `export * from './foo'` or `export { x } from './foo'`
+    ReExport,
+}
+
+impl std::fmt::Display for ImportKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImportKind::EsModule => write!(f, "import"),
+            ImportKind::CommonJs => write!(f, "require"),
+            ImportKind::Dynamic => write!(f, "dynamic import"),
+            ImportKind::ReExport => write!(f, "re-export"),
+        }
+    }
+}
+
+/// Information about a single import statement
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportInfo {
+    /// The import source/path (e.g., "./useUser")
+    pub source: String,
+    /// Line number (1-indexed)
+    pub line: u32,
+    /// The full import text (e.g., "import { useUser } from './useUser';")
+    pub import_text: String,
+    /// Whether this is a type-only import
+    pub is_type_only: bool,
+    /// The kind of import
+    pub kind: ImportKind,
+}
 
 /// Options for import extraction
 #[derive(Default, Clone)]
@@ -20,16 +60,15 @@ pub struct ParserOptions {
 /// - Re-exports (`export * from './foo'`)
 /// - CommonJS requires (`require('./foo')`)
 /// - Dynamic imports (`import('./foo')`)
-pub fn get_imports_from_file(path: &Path, options: &ParserOptions) -> Vec<String> {
-    let module = match parse_file_to_ast(path) {
+///
+/// Returns a Vec of ImportInfo with line numbers and import text.
+pub fn get_imports_from_file(path: &Path, options: &ParserOptions) -> Vec<ImportInfo> {
+    let (module, source_map, source_file) = match parse_file_to_ast(path) {
         Some(m) => m,
         None => return vec![],
     };
 
-    let mut collector = ImportCollector {
-        imports: vec![],
-        ignore_type_imports: options.ignore_type_imports,
-    };
+    let mut collector = ImportCollector::new(options.ignore_type_imports, source_map, source_file);
     module.visit_with(&mut collector);
     collector.imports
 }
@@ -87,8 +126,8 @@ fn get_syntax_for_file(path: &Path) -> Syntax {
     }
 }
 
-fn parse_file_to_ast(path: &Path) -> Option<Module> {
-    let cm = Rc::new(SourceMap::default());
+fn parse_file_to_ast(path: &Path) -> Option<(Module, Lrc<SourceMap>, Lrc<SourceFile>)> {
+    let cm = Lrc::new(SourceMap::default());
     let fm = cm.load_file(path).ok()?;
 
     let syntax = get_syntax_for_file(path);
@@ -96,7 +135,7 @@ fn parse_file_to_ast(path: &Path) -> Option<Module> {
     let mut parser = Parser::new_from(lexer);
 
     match parser.parse_module() {
-        Ok(module) => Some(module),
+        Ok(module) => Some((module, cm, fm)),
         Err(err) => {
             warn!(
                 "Failed to parse '{}': {}",
@@ -112,11 +151,26 @@ fn parse_file_to_ast(path: &Path) -> Option<Module> {
 }
 
 struct ImportCollector {
-    imports: Vec<String>,
+    imports: Vec<ImportInfo>,
     ignore_type_imports: bool,
+    source_map: Lrc<SourceMap>,
+    source_file: Lrc<SourceFile>,
 }
 
 impl ImportCollector {
+    fn new(
+        ignore_type_imports: bool,
+        source_map: Lrc<SourceMap>,
+        source_file: Lrc<SourceFile>,
+    ) -> Self {
+        Self {
+            imports: vec![],
+            ignore_type_imports,
+            source_map,
+            source_file,
+        }
+    }
+
     /// Check if an import declaration should be included based on type-only status
     fn should_include_import(&self, import_decl: &ImportDecl) -> bool {
         if !self.ignore_type_imports {
@@ -130,16 +184,46 @@ impl ImportCollector {
 
         // For mixed imports like `import { type Foo, Bar } from './foo'`
         // Check if ALL specifiers are type-only
-        let all_type_only = import_decl.specifiers.iter().all(|spec| {
-            match spec {
-                ImportSpecifier::Named(named) => named.is_type_only,
-                // Default and namespace imports are value imports
-                ImportSpecifier::Default(_) | ImportSpecifier::Namespace(_) => false,
-            }
+        let all_type_only = import_decl.specifiers.iter().all(|spec| match spec {
+            ImportSpecifier::Named(named) => named.is_type_only,
+            // Default and namespace imports are value imports
+            ImportSpecifier::Default(_) | ImportSpecifier::Namespace(_) => false,
         });
 
         // If all specifiers are type-only, skip this import
         !all_type_only
+    }
+
+    /// Extract line number from a span
+    fn get_line(&self, span: Span) -> u32 {
+        let loc = self.source_map.lookup_char_pos(span.lo);
+        loc.line as u32
+    }
+
+    /// Extract the source text for a span
+    fn get_span_text(&self, span: Span) -> String {
+        let lo = span.lo.0 as usize - self.source_file.start_pos.0 as usize;
+        let hi = span.hi.0 as usize - self.source_file.start_pos.0 as usize;
+        let src = self.source_file.src.as_ref();
+
+        if lo <= hi && hi <= src.len() {
+            src[lo..hi].to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    fn add_import(&mut self, source: String, span: Span, is_type_only: bool, kind: ImportKind) {
+        let line = self.get_line(span);
+        let import_text = self.get_span_text(span);
+
+        self.imports.push(ImportInfo {
+            source,
+            line,
+            import_text,
+            is_type_only,
+            kind,
+        });
     }
 }
 
@@ -151,14 +235,24 @@ impl Visit for ImportCollector {
             // ES Module imports: import { foo } from './foo'
             ModuleItem::ModuleDecl(ModuleDecl::Import(import_decl)) => {
                 if self.should_include_import(import_decl) {
-                    self.imports.push(import_decl.src.value.to_string());
+                    self.add_import(
+                        import_decl.src.value.to_string(),
+                        import_decl.span,
+                        import_decl.type_only,
+                        ImportKind::EsModule,
+                    );
                 }
             }
             // Re-exports: export * from './foo'
             ModuleItem::ModuleDecl(ModuleDecl::ExportAll(export_all)) => {
                 // export type * from './foo' is type-only
                 if !(self.ignore_type_imports && export_all.type_only) {
-                    self.imports.push(export_all.src.value.to_string());
+                    self.add_import(
+                        export_all.src.value.to_string(),
+                        export_all.span,
+                        export_all.type_only,
+                        ImportKind::ReExport,
+                    );
                 }
             }
             // Named re-exports: export { foo } from './foo'
@@ -166,7 +260,12 @@ impl Visit for ImportCollector {
                 if let Some(src) = &named_export.src {
                     // Check if this is a type-only export
                     if !(self.ignore_type_imports && named_export.type_only) {
-                        self.imports.push(src.value.to_string());
+                        self.add_import(
+                            src.value.to_string(),
+                            named_export.span,
+                            named_export.type_only,
+                            ImportKind::ReExport,
+                        );
                     }
                 }
             }
@@ -183,7 +282,12 @@ impl Visit for ImportCollector {
                 if ident.sym.as_ref() == "require" {
                     if let Some(arg) = call.args.first() {
                         if let Expr::Lit(Lit::Str(s)) = &*arg.expr {
-                            self.imports.push(s.value.to_string());
+                            self.add_import(
+                                s.value.to_string(),
+                                call.span,
+                                false,
+                                ImportKind::CommonJs,
+                            );
                         }
                     }
                 }
@@ -200,12 +304,111 @@ impl Visit for ImportCollector {
             if let Callee::Import(_) = &call.callee {
                 if let Some(arg) = call.args.first() {
                     if let Expr::Lit(Lit::Str(s)) = &*arg.expr {
-                        self.imports.push(s.value.to_string());
+                        self.add_import(s.value.to_string(), call.span, false, ImportKind::Dynamic);
                     }
                 }
             }
         }
 
         expr.visit_children_with(self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn create_temp_file(content: &str, extension: &str) -> NamedTempFile {
+        let mut file = tempfile::Builder::new()
+            .suffix(extension)
+            .tempfile()
+            .unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        file
+    }
+
+    #[test]
+    fn test_parse_es_import() {
+        let file = create_temp_file("import { foo } from './bar';", ".ts");
+        let imports = get_imports_from_file(file.path(), &ParserOptions::default());
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].source, "./bar");
+        assert_eq!(imports[0].line, 1);
+        assert_eq!(imports[0].kind, ImportKind::EsModule);
+        assert!(!imports[0].is_type_only);
+    }
+
+    #[test]
+    fn test_parse_type_only_import() {
+        let file = create_temp_file("import type { Foo } from './types';", ".ts");
+
+        // Without ignore_type_imports
+        let imports = get_imports_from_file(file.path(), &ParserOptions::default());
+        assert_eq!(imports.len(), 1);
+        assert!(imports[0].is_type_only);
+
+        // With ignore_type_imports
+        let imports = get_imports_from_file(
+            file.path(),
+            &ParserOptions {
+                ignore_type_imports: true,
+            },
+        );
+        assert_eq!(imports.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_require() {
+        let file = create_temp_file("const foo = require('./bar');", ".js");
+        let imports = get_imports_from_file(file.path(), &ParserOptions::default());
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].source, "./bar");
+        assert_eq!(imports[0].kind, ImportKind::CommonJs);
+    }
+
+    #[test]
+    fn test_parse_dynamic_import() {
+        let file = create_temp_file("const foo = import('./bar');", ".ts");
+        let imports = get_imports_from_file(file.path(), &ParserOptions::default());
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].source, "./bar");
+        assert_eq!(imports[0].kind, ImportKind::Dynamic);
+    }
+
+    #[test]
+    fn test_parse_reexport() {
+        let file = create_temp_file("export * from './utils';", ".ts");
+        let imports = get_imports_from_file(file.path(), &ParserOptions::default());
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].source, "./utils");
+        assert_eq!(imports[0].kind, ImportKind::ReExport);
+    }
+
+    #[test]
+    fn test_line_numbers() {
+        let file = create_temp_file(
+            "// comment\nimport { a } from './a';\nimport { b } from './b';",
+            ".ts",
+        );
+        let imports = get_imports_from_file(file.path(), &ParserOptions::default());
+
+        assert_eq!(imports.len(), 2);
+        assert_eq!(imports[0].line, 2);
+        assert_eq!(imports[1].line, 3);
+    }
+
+    #[test]
+    fn test_import_text_captured() {
+        let file = create_temp_file("import { foo, bar } from './baz';", ".ts");
+        let imports = get_imports_from_file(file.path(), &ParserOptions::default());
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].import_text, "import { foo, bar } from './baz';");
     }
 }

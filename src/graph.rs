@@ -1,40 +1,99 @@
 use crate::filesystem::normalize_path;
-use crate::parser::{get_imports_from_file, ParserOptions};
+use crate::parser::{get_imports_from_file, ImportInfo, ParserOptions};
 use crate::tsconfig::PathAliases;
+use crate::utils::{hash_strings, relative_path_string, EXTENSIONS};
 use crate::workspace::Workspace;
 
-use colored::*;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use petgraph::algo::kosaraju_scc;
+use petgraph::graph::NodeIndex;
+use petgraph::visit::EdgeRef;
 use petgraph::Graph;
 use rayon::prelude::*;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-fn get_static_extension_list() -> Vec<String> {
-    vec![
-        ".tsx".to_string(),
-        ".ts".to_string(),
-        ".jsx".to_string(),
-        ".js".to_string(),
-        ".cjs".to_string(),
-        ".mjs".to_string(),
-    ]
+/// Information stored on each edge in the dependency graph
+#[derive(Debug, Clone, Serialize)]
+pub struct EdgeInfo {
+    /// The import information that created this edge
+    pub import: ImportInfo,
+}
+
+/// A single edge in a cycle, with file and import information
+#[derive(Debug, Clone, Serialize)]
+pub struct CycleEdge {
+    /// Source file of the import
+    pub from_file: PathBuf,
+    /// Target file of the import
+    pub to_file: PathBuf,
+    /// Line number of the import statement (1-indexed)
+    pub line: u32,
+    /// The full import text
+    pub import_text: String,
+}
+
+/// Information about a detected cycle
+#[derive(Debug, Clone, Serialize)]
+pub struct CycleInfo {
+    /// The edges that form this cycle
+    pub edges: Vec<CycleEdge>,
+    /// A stable hash of this cycle (based on relative file paths)
+    pub hash: String,
+}
+
+impl CycleInfo {
+    /// Get the files involved in this cycle (in order)
+    pub fn files(&self) -> Vec<&PathBuf> {
+        self.edges.iter().map(|e| &e.from_file).collect()
+    }
+
+    /// Create a canonical key for deduplication (based on file paths)
+    fn canonical_key(&self, root: &Path) -> String {
+        if self.edges.is_empty() {
+            return String::new();
+        }
+
+        let files: Vec<String> = self
+            .files()
+            .iter()
+            .map(|p| relative_path_string(p, root))
+            .collect();
+
+        // Find the lexicographically smallest file
+        let min_idx = files
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, p)| p.as_str())
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
+        // Rotate to start with min file
+        let rotated: Vec<_> = files[min_idx..]
+            .iter()
+            .chain(files[..min_idx].iter())
+            .cloned()
+            .collect();
+
+        rotated.join(" > ")
+    }
 }
 
 /// Builds the dependency graph from a list of files.
-/// Handles relative imports, path aliases, and workspace packages. Parses files in parallel for performance.
+/// Handles relative imports, path aliases, and workspace packages.
+/// Parses files in parallel for performance.
 pub fn build_dependency_graph(
     files: &[PathBuf],
     options: &ParserOptions,
     path_aliases: Option<&PathAliases>,
     workspace: Option<&Workspace>,
-) -> Graph<PathBuf, ()> {
+) -> Graph<PathBuf, EdgeInfo> {
     let mut graph = Graph::new();
     let mut node_indices = HashMap::new();
 
-    // Dynamically generate the extensions list
-    let extensions = get_static_extension_list();
+    // Convert static extensions to owned strings for compatibility
+    let extensions: Vec<String> = EXTENSIONS.iter().map(|s| s.to_string()).collect();
 
     // Insert all files as nodes
     for file in files {
@@ -56,10 +115,12 @@ pub fn build_dependency_graph(
     for (file, imports) in file_imports {
         debug!("Processing file: {:?}", file);
         for import in imports {
-            if let Some(resolved) = resolve_import(file, &import, &extensions, path_aliases, workspace) {
+            if let Some(resolved) =
+                resolve_import(file, &import.source, &extensions, path_aliases, workspace)
+            {
                 if let Some(&to_idx) = node_indices.get(&resolved) {
                     let from_idx = node_indices[file];
-                    graph.add_edge(from_idx, to_idx, ());
+                    graph.add_edge(from_idx, to_idx, EdgeInfo { import });
                     debug!("Added edge: {:?} -> {:?}", file, resolved);
                 } else {
                     warn!("Resolved import not found in node_indices: {:?}", resolved);
@@ -67,7 +128,7 @@ pub fn build_dependency_graph(
             } else {
                 debug!(
                     "Skipped external or unresolved import '{}' from {:?}",
-                    import, file
+                    import.source, file
                 );
             }
         }
@@ -150,9 +211,7 @@ fn check_candidates(candidate: PathBuf, extensions: &[String]) -> Option<PathBuf
 
     // If candidate is a directory, try index files
     if candidate.is_dir() {
-        let index_extensions = get_static_extension_list();
-
-        for idx_ext in index_extensions {
+        for idx_ext in EXTENSIONS {
             let idx_file = candidate.join(format!("index{}", idx_ext));
             if let Some(canonical) = handle_if_file(&idx_file) {
                 return Some(canonical);
@@ -168,36 +227,25 @@ fn check_candidates(candidate: PathBuf, extensions: &[String]) -> Option<PathBuf
 }
 
 /// Finds all strongly connected components (cycles) in the dependency graph.
-/// Each SCC with more than one node or a self-loop is considered a cycle.
-pub fn find_all_cycles(graph: &Graph<PathBuf, ()>) -> Vec<Vec<&PathBuf>> {
+/// Returns CycleInfo structs with edge metadata.
+/// The `root` parameter is used to compute stable hashes with relative paths.
+pub fn find_all_cycles(graph: &Graph<PathBuf, EdgeInfo>, root: &Path) -> Vec<CycleInfo> {
     let sccs = kosaraju_scc(graph);
     let mut cycles = Vec::new();
 
     for scc in sccs {
         if scc.len() > 1 {
             // A strongly connected component with more than one node indicates a cycle
-            let cycle = scc
-                .iter()
-                .map(|node_index| {
-                    graph
-                        .node_weight(*node_index)
-                        .expect("node index from SCC must exist in graph")
-                })
-                .collect::<Vec<_>>();
-            cycles.push(cycle);
+            if let Some(cycle_info) = extract_cycle_info(graph, &scc, root) {
+                cycles.push(cycle_info);
+            }
         } else {
             // Check for self-loop
             let node = scc[0];
             if graph.contains_edge(node, node) {
-                cycles.push(vec![graph
-                    .node_weight(node)
-                    .expect("node index from SCC must exist in graph")]);
-                debug!(
-                    "Detected self-loop cycle for node: {:?}",
-                    graph
-                        .node_weight(node)
-                        .expect("node index from SCC must exist in graph")
-                );
+                if let Some(cycle_info) = extract_self_loop_info(graph, node, root) {
+                    cycles.push(cycle_info);
+                }
             }
         }
     }
@@ -205,45 +253,160 @@ pub fn find_all_cycles(graph: &Graph<PathBuf, ()>) -> Vec<Vec<&PathBuf>> {
     cycles
 }
 
+/// Extract cycle information from an SCC (strongly connected component)
+fn extract_cycle_info(
+    graph: &Graph<PathBuf, EdgeInfo>,
+    scc: &[NodeIndex],
+    root: &Path,
+) -> Option<CycleInfo> {
+    let scc_set: HashSet<_> = scc.iter().copied().collect();
+    let mut edges = Vec::new();
+
+    // Find edges that form the cycle within this SCC
+    for &from_node in scc {
+        let from_file = graph.node_weight(from_node)?;
+
+        for edge in graph.edges(from_node) {
+            let to_node = edge.target();
+            if scc_set.contains(&to_node) {
+                let to_file = graph.node_weight(to_node)?;
+                let edge_info = edge.weight();
+
+                edges.push(CycleEdge {
+                    from_file: from_file.clone(),
+                    to_file: to_file.clone(),
+                    line: edge_info.import.line,
+                    import_text: edge_info.import.import_text.clone(),
+                });
+            }
+        }
+    }
+
+    if edges.is_empty() {
+        return None;
+    }
+
+    // Order edges to form a proper cycle path
+    let ordered_edges = order_cycle_edges(edges, root);
+
+    // Compute hash based on relative file paths (for stability across machines)
+    let hash = compute_cycle_hash(&ordered_edges, root);
+
+    Some(CycleInfo {
+        edges: ordered_edges,
+        hash,
+    })
+}
+
+/// Order edges to form a coherent cycle path starting from the lexicographically smallest file.
+fn order_cycle_edges(mut edges: Vec<CycleEdge>, root: &Path) -> Vec<CycleEdge> {
+    if edges.is_empty() {
+        return edges;
+    }
+
+    // Build adjacency map: from_file -> list of edges from that file
+    let mut adjacency: HashMap<PathBuf, Vec<CycleEdge>> = HashMap::new();
+    for edge in edges.drain(..) {
+        adjacency
+            .entry(edge.from_file.clone())
+            .or_default()
+            .push(edge);
+    }
+
+    // Find the lexicographically smallest starting file (using relative paths)
+    let start_file = adjacency
+        .keys()
+        .min_by_key(|p| relative_path_string(p, root))
+        .cloned();
+
+    let start_file = match start_file {
+        Some(f) => f,
+        None => return vec![],
+    };
+
+    // Follow the cycle from the start, building a path
+    let mut result = Vec::new();
+    let mut current = start_file.clone();
+    let mut visited = HashSet::new();
+
+    while !visited.contains(&current) {
+        visited.insert(current.clone());
+
+        if let Some(edges_from_current) = adjacency.get(&current) {
+            // Prefer the edge that continues the cycle (to an unvisited node, or back to start)
+            let next_edge = edges_from_current
+                .iter()
+                .find(|e| !visited.contains(&e.to_file) || e.to_file == start_file);
+
+            if let Some(edge) = next_edge {
+                result.push(edge.clone());
+                current = edge.to_file.clone();
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
+/// Extract cycle info for a self-loop
+fn extract_self_loop_info(
+    graph: &Graph<PathBuf, EdgeInfo>,
+    node: NodeIndex,
+    root: &Path,
+) -> Option<CycleInfo> {
+    let file = graph.node_weight(node)?;
+
+    // Find the self-loop edge
+    for edge in graph.edges(node) {
+        if edge.target() == node {
+            let edge_info = edge.weight();
+            let cycle_edge = CycleEdge {
+                from_file: file.clone(),
+                to_file: file.clone(),
+                line: edge_info.import.line,
+                import_text: edge_info.import.import_text.clone(),
+            };
+
+            let hash = compute_cycle_hash(&[cycle_edge.clone()], root);
+
+            return Some(CycleInfo {
+                edges: vec![cycle_edge],
+                hash,
+            });
+        }
+    }
+
+    None
+}
+
+/// Compute a stable hash for a cycle based on relative file paths.
+/// Using relative paths ensures the hash is consistent across machines and directories.
+fn compute_cycle_hash(edges: &[CycleEdge], root: &Path) -> String {
+    // Get relative paths and sort for consistent hashing
+    let mut files: Vec<String> = edges
+        .iter()
+        .map(|e| relative_path_string(&e.from_file, root))
+        .collect();
+    files.sort();
+
+    hash_strings(&files, 12)
+}
+
 /// Deduplicates cycles by creating a canonical representation for each cycle.
-/// Each cycle is rotated so that the lexicographically smallest PathBuf is first.
-fn deduplicate_cycles<'a>(cycles: &[Vec<&'a PathBuf>]) -> Vec<Vec<&'a PathBuf>> {
+fn deduplicate_cycles(cycles: Vec<CycleInfo>, root: &Path) -> Vec<CycleInfo> {
     let mut seen = HashSet::new();
     let mut unique_cycles = Vec::new();
 
     for cycle in cycles {
-        if cycle.is_empty() {
-            continue;
-        }
+        let key = cycle.canonical_key(root);
 
-        // Find the lex smallest path in the cycle
-        let min_path = cycle
-            .iter()
-            .min_by_key(|path| path.to_string_lossy())
-            .expect("cycle is non-empty, checked above");
-        let min_index = cycle
-            .iter()
-            .position(|&path| path == *min_path)
-            .expect("min_path came from cycle, so it must exist");
-
-        // Rotate the cycle so that min_path is first
-        let rotated_cycle: Vec<&PathBuf> = cycle[min_index..]
-            .iter()
-            .chain(cycle[..min_index].iter())
-            .cloned()
-            .collect();
-
-        // Create a unique key for the cycle
-        let key = rotated_cycle
-            .iter()
-            .map(|path| path.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" > ");
-
-        // Check if this cycle has already been seen
         if !seen.contains(&key) {
             seen.insert(key.clone());
-            unique_cycles.push(rotated_cycle);
+            unique_cycles.push(cycle);
             debug!("Unique cycle added: {}", key);
         }
     }
@@ -252,31 +415,90 @@ fn deduplicate_cycles<'a>(cycles: &[Vec<&'a PathBuf>]) -> Vec<Vec<&'a PathBuf>> 
 }
 
 /// Integrates cycle finding using Kosaraju's algorithm and deduplication.
-pub fn get_unique_cycles(graph: &Graph<PathBuf, ()>) -> Vec<Vec<&PathBuf>> {
-    let cycles = find_all_cycles(graph);
-    deduplicate_cycles(&cycles)
+/// The `root` parameter is used to compute stable hashes with relative paths.
+pub fn get_unique_cycles(graph: &Graph<PathBuf, EdgeInfo>, root: &Path) -> Vec<CycleInfo> {
+    let cycles = find_all_cycles(graph, root);
+    deduplicate_cycles(cycles, root)
 }
 
-/// Prints the detected cycles in a Madge-like format with relative paths.
-pub fn print_cycles(cycles: &[Vec<&PathBuf>], root: &Path) {
-    if cycles.is_empty() {
-        log::info!("{}", "no circular dependencies found.".green().bold());
-        return;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_cycle_hash_uses_relative_paths() {
+        let root = PathBuf::from("/home/user/project");
+
+        let edges = vec![
+            CycleEdge {
+                from_file: PathBuf::from("/home/user/project/src/a.ts"),
+                to_file: PathBuf::from("/home/user/project/src/b.ts"),
+                line: 1,
+                import_text: "import { b } from './b'".to_string(),
+            },
+            CycleEdge {
+                from_file: PathBuf::from("/home/user/project/src/b.ts"),
+                to_file: PathBuf::from("/home/user/project/src/a.ts"),
+                line: 1,
+                import_text: "import { a } from './a'".to_string(),
+            },
+        ];
+
+        let hash1 = compute_cycle_hash(&edges, &root);
+
+        // Same relative paths from different absolute root should produce same hash
+        let root2 = PathBuf::from("/different/path/project");
+        let edges2 = vec![
+            CycleEdge {
+                from_file: PathBuf::from("/different/path/project/src/a.ts"),
+                to_file: PathBuf::from("/different/path/project/src/b.ts"),
+                line: 1,
+                import_text: "import { b } from './b'".to_string(),
+            },
+            CycleEdge {
+                from_file: PathBuf::from("/different/path/project/src/b.ts"),
+                to_file: PathBuf::from("/different/path/project/src/a.ts"),
+                line: 1,
+                import_text: "import { a } from './a'".to_string(),
+            },
+        ];
+
+        let hash2 = compute_cycle_hash(&edges2, &root2);
+
+        assert_eq!(
+            hash1, hash2,
+            "Hashes should be equal for same relative paths"
+        );
     }
 
-    info!(
-        "✖ Found {} circular dependencies!\n",
-        cycles.len().to_string().red()
-    );
-    for (i, cycle) in cycles.iter().enumerate() {
-        let relative_paths: Vec<String> = cycle
-            .iter()
-            .map(|p| p.strip_prefix(root).unwrap_or(p).display().to_string())
-            .collect();
-        info!(
-            "{}) {}",
-            (i + 1).to_string().bright_blue().bold(),
-            relative_paths.join(&" > ".bright_blue().bold().to_string())
+    #[test]
+    fn test_cycle_canonical_key() {
+        let root = PathBuf::from("/project");
+
+        let cycle = CycleInfo {
+            edges: vec![
+                CycleEdge {
+                    from_file: PathBuf::from("/project/b.ts"),
+                    to_file: PathBuf::from("/project/a.ts"),
+                    line: 1,
+                    import_text: String::new(),
+                },
+                CycleEdge {
+                    from_file: PathBuf::from("/project/a.ts"),
+                    to_file: PathBuf::from("/project/b.ts"),
+                    line: 1,
+                    import_text: String::new(),
+                },
+            ],
+            hash: String::new(),
+        };
+
+        let key = cycle.canonical_key(&root);
+        // Should start with lexicographically smallest file (a.ts)
+        assert!(
+            key.starts_with("a.ts"),
+            "Key should start with a.ts: {}",
+            key
         );
     }
 }
